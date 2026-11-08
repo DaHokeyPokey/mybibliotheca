@@ -1,8 +1,11 @@
 import csv
 import io
 
-from app.routes.import_format_helpers import get_goodreads_field_mappings
-from app.simplified_book_service import SimplifiedBookService
+from backend_stub import kuzu_backend, kuzu_backend_for_module  # noqa: F401 - autouse fixture
+
+with kuzu_backend():  # importing route modules probes the active backend
+    from app.routes.import_format_helpers import get_goodreads_field_mappings
+    from app.simplified_book_service import SimplifiedBookService
 
 HEADER = ["Book Id", "Title", "Author", "Author l-f", "Additional Authors", "ISBN", "ISBN13",
           "My Rating", "Average Rating", "Publisher", "Binding", "Number of Pages", "Year Published",
@@ -84,7 +87,7 @@ class _FakeBookService:
     def update_book_sync(self, book_id, updates):
         return self.books.get(str(book_id))
 
-    def _populate_relationships(self, book):
+    def _populate_relationships_many(self, books):
         return None
 
     def replace_contributors_sync(self, *a, **k):

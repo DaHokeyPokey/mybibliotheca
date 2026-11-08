@@ -8,7 +8,6 @@ from datetime import datetime
 import os
 from typing import Optional
 
-from app import csrf
 from app.services.simple_backup_service import get_simple_backup_service
 from app.admin import admin_required
 
@@ -183,6 +182,8 @@ def restore_backup(backup_id: str):
 
 
 @simple_backup_bp.route('/restore-complete')
+@login_required
+@admin_required
 def restore_complete():
     """Show restore completion page and trigger logout/restart."""
     import os
@@ -303,7 +304,6 @@ def api_backup_stats():
 @simple_backup_bp.route('/api/settings', methods=['GET', 'POST'])
 @login_required
 @admin_required
-@csrf.exempt  # JSON API endpoint; protecting via auth+admin
 def api_backup_settings():
     """Get or update backup scheduler settings (admin only)."""
     try:

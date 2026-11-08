@@ -5,7 +5,10 @@ from pathlib import Path
 from flask import Flask
 from flask_login import LoginManager
 
-import app.routes.import_routes as import_routes
+from backend_stub import kuzu_backend, kuzu_backend_for_module  # noqa: F401 - autouse fixture
+
+with kuzu_backend():  # importing route modules probes the active backend
+    import app.routes.import_routes as import_routes
 
 
 class _TestUser:

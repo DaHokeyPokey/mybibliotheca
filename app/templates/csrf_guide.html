@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "macros/forms.html" import form_start, form_end, submit_button, csrf_token %}
+{% from "macros/forms.html" import form_start, form_end, submit_button, csrf_field %}
 
 {% block title %}CSRF Protection Guide{% endblock %}
 
@@ -53,14 +53,14 @@
         <div class="card-header">Example: Manual CSRF Token</div>
         <div class="card-body">
             <form method="post" action="/example">
-                {{ csrf_token() }}
+                {{ csrf_field() }}
                 <div class="mb-3">
                     <label for="notes" class="form-label">Notes</label>
                     <input type="text" class="form-control" id="notes" name="notes">
                 </div>
                 <button type="submit" class="btn btn-primary">Submit</button>
             </form>
-            <small class="text-muted">CSRF token manually added using the csrf_token() macro</small>
+            <small class="text-muted">CSRF token manually added using the csrf_field() macro</small>
         </div>
     </div>
 

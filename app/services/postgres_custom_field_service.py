@@ -177,6 +177,17 @@ class PostgresCustomFieldService:
             return False
         name = existing["name"]
         with self.store.transaction() as connection, connection.cursor() as cursor:
+            # Definitions are shared by name, so other users may hold values; never wipe theirs.
+            # Book-level (global) values on a book another user owns count as theirs.
+            cursor.execute(
+                "SELECT EXISTS (SELECT 1 FROM user_books WHERE user_id <> %s AND custom_metadata ? %s) "
+                "OR EXISTS (SELECT 1 FROM custom_fields WHERE definition_id = %s AND user_id <> %s) "
+                "OR EXISTS (SELECT 1 FROM books b JOIN user_books ub ON ub.book_id = b.id "
+                "WHERE b.custom_metadata ? %s AND ub.user_id <> %s)",
+                (str(user_id), name, field_id, str(user_id), name, str(user_id)),
+            )
+            if cursor.fetchone()[0]:
+                return False
             cursor.execute("UPDATE books SET custom_metadata=custom_metadata-%s,updated_at=now() WHERE custom_metadata ? %s", (name, name))
             cursor.execute("UPDATE user_books SET custom_metadata=custom_metadata-%s,updated_at=now() WHERE custom_metadata ? %s", (name, name))
             cursor.execute("DELETE FROM custom_fields WHERE definition_id=%s", (field_id,))

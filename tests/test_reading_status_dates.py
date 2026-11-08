@@ -1,8 +1,11 @@
 from datetime import datetime, timezone
 from unittest.mock import patch
 
-from app.routes.reading_log_routes import _coerce_existing_timestamp
-from app.services.kuzu_service_facade import KuzuServiceFacade
+from backend_stub import kuzu_backend, kuzu_backend_for_module  # noqa: F401 - autouse fixture
+
+with kuzu_backend():  # importing route modules probes the active backend
+    from app.routes.reading_log_routes import _coerce_existing_timestamp
+    from app.services.kuzu_service_facade import KuzuServiceFacade
 
 
 class FakePersonalMetadataService:

@@ -752,6 +752,10 @@ class User:
     
     def increment_failed_login(self, lock_threshold: int = 5) -> None:
         """Increment failed login attempts and lock account if threshold reached."""
+        if self.locked_until is not None and not self.is_locked():
+            # The old lock expired: start a fresh count, or one miss would re-lock at once.
+            self.failed_login_attempts = 0
+            self.locked_until = None
         self.failed_login_attempts += 1
         if self.failed_login_attempts >= lock_threshold:
             # Lock account for 30 minutes

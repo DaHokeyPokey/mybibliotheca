@@ -21,7 +21,7 @@ class DummyResponse:
             raise requests.HTTPError(f"status {self.status_code}")
 
 
-def load_unified_metadata_module():
+def load_unified_metadata_module(monkeypatch):
     module_name = "app.utils.unified_metadata"
     module_path = Path(__file__).resolve().parent.parent / "app" / "utils" / "unified_metadata.py"
 
@@ -36,21 +36,22 @@ def load_unified_metadata_module():
     book_utils.select_highest_google_image = lambda *_args, **_kwargs: None
     book_utils.upgrade_google_cover_url = lambda url: url
 
-    sys.modules["app"] = app_mod
-    sys.modules["app.utils"] = utils_mod
-    sys.modules["app.utils.metadata_settings"] = metadata_settings
-    sys.modules["app.utils.book_utils"] = book_utils
+    # setitem puts the real modules back after the test, so later test files see the real app.
+    monkeypatch.setitem(sys.modules, "app", app_mod)
+    monkeypatch.setitem(sys.modules, "app.utils", utils_mod)
+    monkeypatch.setitem(sys.modules, "app.utils.metadata_settings", metadata_settings)
+    monkeypatch.setitem(sys.modules, "app.utils.book_utils", book_utils)
 
     adaptive_path = Path(__file__).resolve().parent.parent / "app" / "utils" / "adaptive_http.py"
     adaptive_name = "app.utils.adaptive_http"
     adaptive_spec = importlib.util.spec_from_file_location(adaptive_name, adaptive_path)
     adaptive_http = importlib.util.module_from_spec(adaptive_spec)
-    sys.modules[adaptive_name] = adaptive_http
+    monkeypatch.setitem(sys.modules, adaptive_name, adaptive_http)
     adaptive_spec.loader.exec_module(adaptive_http)
 
     spec = importlib.util.spec_from_file_location(module_name, module_path)
     module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
+    monkeypatch.setitem(sys.modules, module_name, module)
     spec.loader.exec_module(module)
     return module
 
@@ -73,7 +74,7 @@ def _google_payload(isbn_value: str):
 
 def test_fetch_google_by_isbn_drops_mismatched_isbn(monkeypatch):
     """Ensure Google results with a different ISBN are ignored."""
-    unified_metadata = load_unified_metadata_module()
+    unified_metadata = load_unified_metadata_module(monkeypatch)
 
     def fake_get(url, timeout=None, headers=None):
         if "googleapis.com/books/v1/volumes?q=isbn:" in url:
@@ -90,7 +91,7 @@ def test_fetch_google_by_isbn_drops_mismatched_isbn(monkeypatch):
 
 def test_unified_fetch_prefers_matching_metadata(monkeypatch):
     """When Google mismatches, fallback data should keep the requested ISBN."""
-    unified_metadata = load_unified_metadata_module()
+    unified_metadata = load_unified_metadata_module(monkeypatch)
 
     requested_isbn = "9781591826040"
 
@@ -124,7 +125,7 @@ def test_unified_fetch_prefers_matching_metadata(monkeypatch):
 
 def test_unified_fetch_accepts_isbn10_and_keeps_requested_identifier(monkeypatch):
     """The normal Add Book lookup must accept ISBN-10 metadata as Fast Add does."""
-    unified_metadata = load_unified_metadata_module()
+    unified_metadata = load_unified_metadata_module(monkeypatch)
     isbn10 = "0756404746"
     monkeypatch.delenv("GOOGLE_BOOKS_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
@@ -163,7 +164,7 @@ def test_bulk_provider_fetch_skips_active_rate_limit_cooldown(
     monkeypatch, fetcher, limiter_key
 ):
     """An active provider cooldown should defer bulk fetches instead of blocking the import."""
-    unified_metadata = load_unified_metadata_module()
+    unified_metadata = load_unified_metadata_module(monkeypatch)
     adaptive_http = sys.modules["app.utils.adaptive_http"]
     monkeypatch.setattr(unified_metadata, "_bulk_fetch_mode", lambda: True)
     limiter = adaptive_http.get_limiter(limiter_key)

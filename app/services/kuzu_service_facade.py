@@ -419,6 +419,10 @@ class KuzuServiceFacade:
         """Total number of Book nodes."""
         return self.relationship_service.get_total_book_count_sync()
 
+    def get_user_book_count_sync(self, user_id: str) -> int:
+        """Kuzu is one shared library, so every user sees the whole catalog."""
+        return self.get_total_book_count_sync()
+
     def get_library_status_counts_sync(self, user_id: str) -> Dict[str, int]:
         """Global reading/ownership status counts for a user across all books."""
         return self.relationship_service.get_library_status_counts_sync(user_id)

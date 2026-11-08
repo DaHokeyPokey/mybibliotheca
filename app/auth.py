@@ -16,6 +16,8 @@ from app.admin import (
     load_backup_config,
     _log,
     _log_force,
+    _submitted_or_saved_ai_key,
+    _submitted_or_saved_smtp_password,
 )
 from app.utils.user_settings import get_default_book_format, get_effective_reading_defaults
 from wtforms import IntegerField, SubmitField
@@ -44,6 +46,40 @@ def _safe_get_row_value(row: Any, index: int) -> Any:
             return row[index]  # type: ignore[index]
     except Exception:
         return None
+
+
+def _safe_next_url(next_page: Optional[str]) -> Optional[str]:
+    """Return `next` only if it is a path on this site.
+
+    Browsers read '//host', '/\\host' and '/<tab>/host' as another site.
+    """
+    if not next_page or not next_page.startswith('/') or next_page.startswith('//'):
+        return None
+    if any(ch == '\\' or ord(ch) < 32 for ch in next_page):
+        return None
+    return next_page
+
+
+def _count_failed_login(user: User) -> None:
+    """Postgres counts in one UPDATE: parallel guesses on several workers must not overwrite each other."""
+    record = getattr(user_service, 'record_failed_login_sync', None)
+    if record is None:
+        # Kuzu runs a single worker, so this read-modify-write cannot race there.
+        user.increment_failed_login()
+        user_service.update_user_sync(user)
+        return
+    row = record(user.id)
+    if row:
+        user.failed_login_attempts, user.locked_until = row
+
+
+def _clear_failed_logins(user: User) -> None:
+    user.reset_failed_login()
+    clear = getattr(user_service, 'clear_failed_login_sync', None)
+    if clear is None:
+        user_service.update_user_sync(user)
+    else:
+        clear(user.id)  # not a full-row write, which could undo a concurrent admin change
 
 @auth.route('/setup', methods=['GET', 'POST'])
 @debug_route('SETUP')
@@ -143,8 +179,7 @@ def login():
                 debug_auth("Password check passed")
                 # Successful login - reset failed login attempts if any
                 if user.failed_login_attempts > 0 or user.locked_until:
-                    user.reset_failed_login()
-                    user_service.update_user_sync(user)
+                    _clear_failed_logins(user)
                 
                 # Set session as permanent if remember_me is checked
                 # This allows Flask-Login's remember cookie to work properly
@@ -164,17 +199,13 @@ def login():
                     flash('You must change your password before continuing.', 'warning')
                     return redirect(url_for('auth.forced_password_change'))
                 
-                next_page = request.args.get('next')
-                if not next_page or not next_page.startswith('/'):
-                    next_page = url_for('main.index')
+                next_page = _safe_next_url(request.args.get('next')) or url_for('main.index')
                 debug_auth(f"Redirecting to: {next_page}")
                 flash(f'Welcome back, {user.username}!', 'success')
                 return redirect(next_page)
             else:
                 debug_auth("Password check failed")
-                # Failed password - increment failed attempts and save to Kuzu
-                user.increment_failed_login()
-                user_service.update_user_sync(user)
+                _count_failed_login(user)
                 attempts_left = max(0, 5 - user.failed_login_attempts)
                 if attempts_left > 0:
                     flash(f'Invalid password. You have {attempts_left} attempts remaining.', 'error')
@@ -663,7 +694,9 @@ def settings_personal_abs_partial():
     abs_settings = load_abs_settings()
     if request.method == 'POST':
         abs_username = (request.form.get('abs_username') or '').strip()
-        abs_api_key = (request.form.get('abs_api_key') or '').strip()
+        # The form never echoes the saved key, so blank means "keep it".
+        abs_api_key = (request.form.get('abs_api_key') or '').strip() or \
+            (load_user_settings(getattr(current_user, 'id', None)) or {}).get('abs_api_key', '')
         abs_sync_books = True if request.form.get('abs_sync_books') in ('on','true','1') else False
         abs_sync_listening = True if request.form.get('abs_sync_listening') in ('on','true','1') else False
         payload = {
@@ -818,7 +851,7 @@ def save_ai_settings():
     try:
         config = {
             'AI_PROVIDER': request.form.get('ai_provider', 'openai'),
-            'OPENAI_API_KEY': request.form.get('openai_api_key', ''),
+            'OPENAI_API_KEY': _submitted_or_saved_ai_key(),
             'OPENAI_BASE_URL': request.form.get('openai_base_url', 'https://api.openai.com/v1'),
             'OPENAI_MODEL': request.form.get('openai_model', 'gpt-4o'),
             'OLLAMA_BASE_URL': request.form.get('ollama_base_url', 'http://localhost:11434/v1'),
@@ -860,7 +893,7 @@ def test_ai_connection():
     try:
         config = {
             'AI_PROVIDER': request.form.get('ai_provider', 'openai'),
-            'OPENAI_API_KEY': request.form.get('openai_api_key', ''),
+            'OPENAI_API_KEY': _submitted_or_saved_ai_key(),
             'OPENAI_BASE_URL': request.form.get('openai_base_url', 'https://api.openai.com/v1'),
             'OPENAI_MODEL': request.form.get('openai_model', 'gpt-4o'),
             'OLLAMA_BASE_URL': request.form.get('ollama_base_url', 'http://localhost:11434/v1'),
@@ -913,7 +946,7 @@ def save_smtp_settings():
         config = {
             'smtp_server': (request.form.get('smtp_server') or '').strip(),
             'smtp_username': (request.form.get('smtp_username') or '').strip(),
-            'smtp_password': (request.form.get('smtp_password') or '').strip(),
+            'smtp_password': _submitted_or_saved_smtp_password(),
             'smtp_from_email': (request.form.get('smtp_from_email') or '').strip(),
             'smtp_from_name': (request.form.get('smtp_from_name') or 'MyBibliotheca').strip(),
         }
@@ -964,7 +997,7 @@ def test_smtp_connection():
     smtp_server = (request.form.get('smtp_server') or '').strip()
     raw_port = (request.form.get('smtp_port') or '').strip()
     smtp_username = (request.form.get('smtp_username') or '').strip()
-    smtp_password = (request.form.get('smtp_password') or '').strip()
+    smtp_password = _submitted_or_saved_smtp_password()
     allowed_security_values = {'starttls', 'ssl', 'none'}
     raw_security = (request.form.get('smtp_security') or '').strip().lower()
     if raw_security not in allowed_security_values:

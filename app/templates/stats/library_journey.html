@@ -731,26 +731,26 @@ function showClusterModal(books, year) {
             clusterHTML += `
                 <div class="col-md-4 col-sm-6">
                     <div class="cluster-book-item card h-100" onclick="showIndividualBookFromCluster(this)" 
-                         data-book-id="${book.id || ''}"
-                         data-book-uid="${book.uid || ''}"
-                         data-book-title="${book.title || ''}"
-                         data-book-authors="${book.authors_text || ''}"
-                         data-book-status="${book.reading_status || ''}"
-                         data-book-status-color="${book.status_color || ''}"
-                         data-book-cover="${book.cover_url || ''}"
-                         data-book-rating="${book.user_rating || ''}"
-                         data-book-pages="${book.page_count || ''}"
-                         data-book-categories="${book.categories_text || ''}"
-                         data-book-notes="${book.personal_notes || ''}"
-                         data-book-date="${book.date_added || ''}">
+                         data-book-id="${escapeHtml(book.id)}"
+                         data-book-uid="${escapeHtml(book.uid)}"
+                         data-book-title="${escapeHtml(book.title)}"
+                         data-book-authors="${escapeHtml(book.authors_text)}"
+                         data-book-status="${escapeHtml(book.reading_status)}"
+                         data-book-status-color="${escapeHtml(book.status_color)}"
+                         data-book-cover="${escapeHtml(book.cover_url)}"
+                         data-book-rating="${escapeHtml(book.user_rating)}"
+                         data-book-pages="${escapeHtml(book.page_count)}"
+                         data-book-categories="${escapeHtml(book.categories_text)}"
+                         data-book-notes="${escapeHtml(book.personal_notes)}"
+                         data-book-date="${escapeHtml(book.date_added)}">
                         <div class="card-body p-2 text-center">
-                            ${book.cover_url ? 
-                                `<img src="${book.cover_url}" alt="${book.title}" class="img-fluid mb-2" style="max-height: 80px; max-width: 60px; object-fit: cover; border-radius: 4px; border: 2px solid ${book.status_color};">` :
-                                `<div class="bg-secondary text-white rounded mb-2 mx-auto d-flex align-items-center justify-content-center" style="height: 80px; width: 60px; font-size: 0.7rem; text-align: center;">${book.display_title || book.title.substring(0, 10)}</div>`
+                            ${book.cover_url ?
+                                `<img src="${escapeHtml(book.cover_url)}" alt="${escapeHtml(book.title)}" class="img-fluid mb-2" style="max-height: 80px; max-width: 60px; object-fit: cover; border-radius: 4px; border: 2px solid ${escapeHtml(book.status_color)};">` :
+                                `<div class="bg-secondary text-white rounded mb-2 mx-auto d-flex align-items-center justify-content-center" style="height: 80px; width: 60px; font-size: 0.7rem; text-align: center;">${escapeHtml(book.display_title || book.title.substring(0, 10))}</div>`
                             }
-                            <h6 class="card-title small mb-1">${book.title}</h6>
-                            <p class="card-text small text-muted mb-1">${book.authors_text}</p>
-                            <span class="badge" style="background-color: ${book.status_color}; font-size: 0.7rem;">
+                            <h6 class="card-title small mb-1">${escapeHtml(book.title)}</h6>
+                            <p class="card-text small text-muted mb-1">${escapeHtml(book.authors_text)}</p>
+                            <span class="badge" style="background-color: ${escapeHtml(book.status_color)}; font-size: 0.7rem;">
                                 ${formatStatus(book.reading_status)}
                             </span>
                         </div>
@@ -804,20 +804,20 @@ function generateBookModalContent(book) {
         <div class="row">
             <div class="col-md-4">
                 ${book.cover_url ? 
-                    `<img src="${book.cover_url}" alt="${book.title || 'Book cover'}" class="img-fluid rounded shadow">` :
+                    `<img src="${escapeHtml(book.cover_url)}" alt="${escapeHtml(book.title || 'Book cover')}" class="img-fluid rounded shadow">` :
                     `<div class="bg-secondary text-white rounded d-flex align-items-center justify-content-center" style="height: 200px;">
                         <i class="bi bi-book" style="font-size: 3rem;"></i>
                     </div>`
                 }
             </div>
             <div class="col-md-8">
-                <h4>${book.title || 'Unknown Title'}</h4>
-                <p class="text-muted">by ${book.authors_text || 'Unknown Author'}</p>
+                <h4>${escapeHtml(book.title || 'Unknown Title')}</h4>
+                <p class="text-muted">by ${escapeHtml(book.authors_text || 'Unknown Author')}</p>
                 
                 <div class="row">
                     <div class="col-sm-6">
                         <strong>Status:</strong> 
-                        <span class="badge" style="background-color: ${book.status_color || '#6c757d'};">
+                        <span class="badge" style="background-color: ${escapeHtml(book.status_color || '#6c757d')};">
                             ${formatStatus(book.reading_status)}
                         </span>
                     </div>
@@ -831,12 +831,12 @@ function generateBookModalContent(book) {
                     ` : ''}
                     ${book.page_count ? `
                     <div class="col-sm-6">
-                        <strong>Pages:</strong> ${book.page_count}
+                        <strong>Pages:</strong> ${escapeHtml(book.page_count)}
                     </div>
                     ` : ''}
                     ${book.categories_text ? `
                     <div class="col-sm-12 mt-2">
-                        <strong>Categories:</strong> ${book.categories_text}
+                        <strong>Categories:</strong> ${escapeHtml(book.categories_text)}
                     </div>
                     ` : ''}
                 </div>
@@ -844,7 +844,7 @@ function generateBookModalContent(book) {
                 ${book.personal_notes ? `
                 <div class="mt-3">
                     <strong>Notes:</strong>
-                    <p class="text-muted">${book.personal_notes}</p>
+                    <p class="text-muted">${escapeHtml(book.personal_notes)}</p>
                 </div>
                 ` : ''}
                 

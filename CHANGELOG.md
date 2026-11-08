@@ -10,6 +10,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Admin-only "New update available" notice backed by a cached, silent GitHub releases check (disable with `UPDATE_CHECK_ENABLED=false`).
 
+### Security
+- Settings pages no longer send saved secrets (OpenAI API key, SMTP password, personal Audiobookshelf key, OPDS password) back to the browser. Leaving one of these fields blank keeps the saved value; type a new value to replace it.
+- Book, person, category, file and error text shown in search dropdowns, previews, modals and stats tooltips is now HTML-escaped, so a crafted title or name can no longer run script in another user's browser.
+- The backup schedule API now requires a CSRF token instead of being exempt.
+- The setup confirmation step no longer prints the submitted form, including its CSRF token, to the browser console.
+- The first-run setup wizard closes once any account exists; before, anyone could reach its steps and create a new admin account on a running install.
+- The raw book data view (`/book/<uid>/raw`) is admin-only and never includes password hashes. Before, any user who had a book could see other users' password hashes, emails and personal notes on installs migrated from Kuzu.
+- The post-restore page (`/auth/simple-backup/restore-complete`) now requires an admin. Before, anyone could open it and restart a worker process.
+- Deactivating or deleting a user now ends their existing sessions and remember-me logins. Deactivated admins no longer count toward the "last admin" protection, and admins can no longer deactivate their own account.
+- Failed logins are counted in one database update, so parallel guesses can no longer slip past the 5-attempt lock on PostgreSQL. After a lock expires, the count starts again instead of re-locking on the next mistake.
+- After login, the app only redirects to pages on this site; links such as `/login?next=//other.example` now land on the home page.
+- Person website and official links must be `http`/`https`; `javascript:` links are dropped when saved and are no longer shown if they were saved before.
+- Downloading a cover from a URL now checks every redirect against private and local addresses, and stops sending credentials when a redirect leaves the original host.
+
+### Changed
+- Deleting a custom field is refused while other users still have values for it (on PostgreSQL), and the error message says why; before, it erased their values too.
+- The library page on PostgreSQL counts and pages through your own books, not the whole shared catalog.
+- Docker: Gunicorn workers are no longer restarted every ~1000 requests; the restart killed long imports mid-file.
+- Removed the unused `scrypt` and `cryptography` dependencies.
+- On PostgreSQL, deleting a book removes it only from your own library (with your custom fields for it). The book stays for other users who have it, and leaves the catalog when its last owner removes it. Before, deleting a book removed it from every user's library. You can no longer delete a book that is not in your library.
+
+### Fixed
+- Scheduled backups and OPDS/Audiobookshelf auto-syncs run once, not once per worker (six nightly backups on the default Docker setup). Backup settings and the backup list now stay in step across workers, and an OPDS auto-sync is no longer queued again while it is still running.
+- Cancel now stops a running CSV import, and the job shows as cancelled.
+- ISBN-only CSV rows whose metadata lookup was capped or ran out of time are imported and marked Needs Review, as the progress message says, instead of being dropped as errors.
+- Community stats, user profiles and the monthly review image show finished and current books again on PostgreSQL.
+- Editing a book now reports an error when part of the save fails, instead of "saved" with authors or categories missing.
+- The library page no longer shows deleted books, or misses new ones, depending on which worker answers.
+- Book lists such as the reading-log book picker load with a fixed number of database queries instead of several per book.
+- Deleting a series from its detail page works again (the request was missing its CSRF token).
+- Reading Journey stats page: its scripts were broken by stray CSS and never ran; clicks and filters work again.
+- Library Network explorer no longer stops setting up when its density slider is absent.
+- Adding a book no longer throws a console error after a lookup (call to an undefined cover-picker function removed).
+- On the book edit page, pressing Enter to add a new contributor no longer throws an error; the contributor is added and marked as new.
+- The `form_start`/`csrf_token` form macros no longer recurse forever; the CSRF macro is now `csrf_field()`, which fixes the CSRF guide page.
+
+### Removed
+- Unused templates `edit_book.html`, `add_book_new.html` and `import_books_confirmation.html`, and five unused helper functions.
+- Unused modules `app/utils.py` (shadowed by the `app/utils/` package), `app/sqlite_migration_service.py` and `network_data_fix.py`.
+
 ## [3.0.1] - 2026-11-02
 
 ### Fixed

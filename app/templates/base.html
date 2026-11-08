@@ -1811,6 +1811,16 @@
       </div>
     </nav>
     {% endblock %}
+    <script>
+    // Shared escaper for page scripts that build HTML from book/person/category data.
+    // Rendered for every user, so keep it outside any Jinja if-block. Assigned, not declared,
+    // so pages with their own escapeHtml can still redefine it.
+    window.escapeHtml = window.escapeHtml || function (value) {
+      return String(value == null ? '' : value).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+    };
+    </script>
     {% if current_user.is_authenticated and current_user.is_admin %}
     <div class="update-banner-wrap">
       <div id="update-banner" class="alert alert-info alert-dismissible fade show mb-3 d-none" role="alert" data-endpoint="{{ url_for('admin.update_check_status') }}">
@@ -2627,9 +2637,9 @@
             const item = document.createElement('div');
             item.className = 'autocomplete-item';
             item.innerHTML = `
-              <div class="book-title-main">${book.title}</div>
-        ${book.series ? `<div class="book-series-sub">${book.series}</div>` : ''}
-        ${book.authors ? `<div class="book-authors-sub">by ${book.authors}</div>` : (book.author ? `<div class=\"book-authors-sub\">by ${book.author}</div>` : '')}
+              <div class="book-title-main">${escapeHtml(book.title)}</div>
+        ${book.series ? `<div class="book-series-sub">${escapeHtml(book.series)}</div>` : ''}
+        ${book.authors ? `<div class="book-authors-sub">by ${escapeHtml(book.authors)}</div>` : (book.author ? `<div class=\"book-authors-sub\">by ${escapeHtml(book.author)}</div>` : '')}
             `;
             item.addEventListener('click', () => selectBook(book, 'manual'));
             bookDropdown.appendChild(item);

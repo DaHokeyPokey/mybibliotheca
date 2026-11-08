@@ -138,7 +138,7 @@ class PostgresUserService:
 
     def get_admin_count_sync(self) -> int:
         with self.store.connection() as connection, connection.cursor() as cursor:
-            cursor.execute("SELECT count(*) FROM users WHERE is_admin")
+            cursor.execute("SELECT count(*) FROM users WHERE is_admin AND is_active")
             return int(cursor.fetchone()[0])
 
     async def get_admin_count(self) -> int:
@@ -173,6 +173,30 @@ class PostgresUserService:
 
     async def update_user(self, user: User) -> User | None:
         return await asyncio.to_thread(self.update_user_sync, user)
+
+    def record_failed_login_sync(self, user_id: str, lock_threshold: int = 5, lock_minutes: int = 30) -> tuple[int, Any] | None:
+        """Count a failed login in one statement so parallel guesses can't overwrite each other.
+
+        An expired lock restarts the count at 1. SET expressions all read the old row.
+        """
+        attempts = "CASE WHEN locked_until <= now() THEN 1 ELSE failed_login_attempts + 1 END"
+        with self.store.transaction() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                f"UPDATE users SET failed_login_attempts = {attempts}, "
+                f"locked_until = CASE WHEN {attempts} >= %s THEN now() + make_interval(mins => %s) "
+                "WHEN locked_until <= now() THEN NULL ELSE locked_until END, updated_at = now() "
+                "WHERE id = %s RETURNING failed_login_attempts, locked_until",
+                (lock_threshold, lock_minutes, user_id),
+            )
+            row = cursor.fetchone()
+        return (int(row[0]), row[1]) if row else None
+
+    def clear_failed_login_sync(self, user_id: str) -> None:
+        with self.store.transaction() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE users SET failed_login_attempts = 0, locked_until = NULL, updated_at = now() WHERE id = %s",
+                (user_id,),
+            )
 
     def delete_user_sync(self, user_id: str) -> bool:
         # Keep account and reading history intact. Admin deletion in the

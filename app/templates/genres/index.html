@@ -675,7 +675,7 @@ function bulkDeleteCategories() {
         const categoryName = categoryCard.querySelector('strong').textContent || categoryCard.dataset.name;
         const bookCount = parseInt(checkbox.dataset.bookCount) || 0;
         
-        summary += `• ${categoryName}`;
+        summary += `• ${escapeHtml(categoryName)}`;
         if (bookCount > 0) {
             summary += ` (${bookCount} books)`;
             categoriesWithBooks++;

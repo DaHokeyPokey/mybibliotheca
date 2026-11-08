@@ -898,11 +898,3 @@ def get_postgres_store() -> PostgresStore:
             if _store is None:
                 _store = PostgresStore()
     return _store
-
-
-def reset_postgres_store_for_tests() -> None:
-    global _store
-    with _store_lock:
-        if _store is not None:
-            _store.close()
-        _store = None

@@ -1165,7 +1165,7 @@ function displayTitleSearchResults(results) {
             <div class="card mb-3 search-result-card h-100">
                 <div class="row g-0">
                     <div class="col-3 col-md-2">
-                    <img src="${coverUrl}" class="img-fluid rounded-start" alt="Book Cover" 
+                    <img src="${escapeHtml(coverUrl)}" class="img-fluid rounded-start" alt="Book Cover" 
                              style="height: 160px; width: 100%; object-fit: cover;"
                         onerror="this.src='${FALLBACK_COVER_URL}'">
                     </div>
@@ -1193,7 +1193,7 @@ function displayTitleSearchResults(results) {
                                 </div>
                                 <div class="col-12 col-md-6">
                                     <small class="text-muted d-block">
-                                        <strong>Pages:</strong> ${book.page_count || 'Unknown'}
+                                        <strong>Pages:</strong> ${escapeHtml(book.page_count || 'Unknown')}
                                     </small>
                                     <small class="text-muted d-block">
                                     <strong>ISBN:</strong> ${escapeHtml(isbn || 'Not available')}
@@ -1211,7 +1211,7 @@ function displayTitleSearchResults(results) {
                             <div class="d-flex justify-content-between align-items-center">
                                 <small class="text-primary">
                                     <i class="bi bi-info-circle me-1"></i>
-                                    Source: ${fullData.source || 'Unknown'}
+                                    Source: ${escapeHtml(fullData.source || 'Unknown')}
                                 </small>
                                 <button type="button" class="btn btn-primary btn-sm"
                                         onclick="selectBookFromSearch(${index})">
@@ -1474,14 +1474,6 @@ function populateFormWithBookData(bookData, options = {}) {
 
 
 
-    // Automatically fetch and show cover candidates to let the user pick a better-quality image
-    try {
-        const isbn = document.getElementById('isbn').value || '';
-        const title = document.getElementById('title').value || '';
-        const authors = getSelectedAuthorsForSearch();
-        // Defer slightly so DOM updates settle
-        setTimeout(() => fetchAndShowCoverCandidates({isbn, title, authors}), 250);
-    } catch (_) {}
 }
 
 // Advanced file upload handler with OCR and AI processing
@@ -1522,7 +1514,7 @@ function handleFileUpload(input) {
                         <strong>${fileTypeDisplay}</strong>
                     </div>
                     <div class="flex-grow-1">
-                        <div><strong>${fileName}</strong></div>
+                        <div><strong>${escapeHtml(fileName)}</strong></div>
                         <div class="small text-muted">${fileSize} MB • ${processingMessage}</div>
                         <div class="mt-2">
                             <select class="form-select form-select-sm" id="processing-method" style="width: auto; display: inline-block;">
@@ -1551,7 +1543,7 @@ function handleFileUpload(input) {
                         <strong>${fileTypeDisplay}</strong>
                     </div>
                     <div class="flex-grow-1">
-                        <div><strong>${fileName}</strong></div>
+                        <div><strong>${escapeHtml(fileName)}</strong></div>
                         <div class="small text-muted">${fileSize} MB • ${processingMessage}</div>
                     </div>
                     <div>
@@ -1625,7 +1617,7 @@ function processFile() {
                 <div class="spinner-border spinner-border-sm me-2" role="status">
                     <span class="visually-hidden">Processing...</span>
                 </div>
-                <strong>${processingMessage} ${fileName}...</strong>
+                <strong>${processingMessage} ${escapeHtml(fileName)}...</strong>
             </div>
         </div>
     `;
@@ -1662,7 +1654,7 @@ function processFile() {
             window.location.href = `/import/import-books/progress/${data.task_id}`;
         } else if (data && data.message) {
             // Show message from server
-            showMessage(data.message, 'info');
+            showMessage(escapeHtml(data.message), 'info');
         }
         
         // Clear the file preview after successful processing
@@ -1675,7 +1667,7 @@ function processFile() {
         filePreview.innerHTML = `
             <div class="alert alert-danger">
                 <i class="bi bi-exclamation-triangle me-2"></i>
-                <strong>Error processing file:</strong> ${error.message}
+                <strong>Error processing file:</strong> ${escapeHtml(error.message)}
             </div>
         `;
     });
@@ -1889,7 +1881,7 @@ function addContributor(type, name, id) {
     if (id) {
         tag.setAttribute('data-id', id);
     }
-    tag.innerHTML = `${name} <span class="remove" onclick="removeContributor(this)">×</span>`;
+    tag.innerHTML = `${escapeHtml(name)} <span class="remove" onclick="removeContributor(this)">×</span>`;
     
     displayDiv.appendChild(tag);
     
@@ -1918,9 +1910,9 @@ function addCategory(name, id, color, icon) {
     
     let tagContent = '';
     if (icon) {
-        tagContent += `<span class="me-1">${icon}</span>`;
+        tagContent += `<span class="me-1">${escapeHtml(icon)}</span>`;
     }
-    tagContent += `${name} <span class="remove" onclick="removeCategory(this)">×</span>`;
+    tagContent += `${escapeHtml(name)} <span class="remove" onclick="removeCategory(this)">×</span>`;
     tag.innerHTML = tagContent;
     
     if (color) {
@@ -2156,8 +2148,8 @@ function showDropdown(dropdown, data, input) {
     
     if (data.length === 0) {
         dropdown.innerHTML = `
-            <div class="autocomplete-item create-new" onclick="createNewPerson('${input.value.trim()}', '${input.getAttribute('data-type')}', this)">
-                <i class="bi bi-plus-circle me-2"></i>Create "${input.value.trim()}" as new contributor
+            <div class="autocomplete-item create-new" onclick="createNewPerson(${escapeHtml(JSON.stringify(input.value.trim()))}, ${escapeHtml(JSON.stringify(input.getAttribute('data-type')))}, this)">
+                <i class="bi bi-plus-circle me-2"></i>Create "${escapeHtml(input.value.trim())}" as new contributor
             </div>
         `;
     } else {
@@ -2165,8 +2157,8 @@ function showDropdown(dropdown, data, input) {
             const item = document.createElement('div');
             item.className = 'autocomplete-item';
             item.innerHTML = `
-                <div class="name">${person.name}</div>
-                ${person.bio ? `<div class="bio">${person.bio}</div>` : ''}
+                <div class="name">${escapeHtml(person.name)}</div>
+                ${person.bio ? `<div class="bio">${escapeHtml(person.bio)}</div>` : ''}
             `;
             item.onclick = () => selectPerson(person, input);
             dropdown.appendChild(item);
@@ -2176,7 +2168,7 @@ function showDropdown(dropdown, data, input) {
         const createItem = document.createElement('div');
         createItem.className = 'autocomplete-item create-new';
         createItem.innerHTML = `
-            <i class="bi bi-plus-circle me-2"></i>Create "${input.value.trim()}" as new contributor
+            <i class="bi bi-plus-circle me-2"></i>Create "${escapeHtml(input.value.trim())}" as new contributor
         `;
         createItem.onclick = () => createNewPerson(input.value.trim(), input.getAttribute('data-type'), createItem);
         dropdown.appendChild(createItem);
@@ -2296,8 +2288,8 @@ function showCategoryDropdown(dropdown, data, input) {
     
     if (data.length === 0) {
         dropdown.innerHTML = `
-            <div class="autocomplete-item create-new" onclick="createNewCategory('${input.value.trim()}', this)">
-                <i class="bi bi-plus-circle me-2"></i>Create "${input.value.trim()}" as new genre
+            <div class="autocomplete-item create-new" onclick="createNewCategory(${escapeHtml(JSON.stringify(input.value.trim()))}, this)">
+                <i class="bi bi-plus-circle me-2"></i>Create "${escapeHtml(input.value.trim())}" as new genre
             </div>
         `;
     } else {
@@ -2306,8 +2298,8 @@ function showCategoryDropdown(dropdown, data, input) {
             item.className = 'autocomplete-item';
             item.innerHTML = `
                 <div class="name">
-                    ${category.icon ? `<span class="me-1">${category.icon}</span>` : ''}
-                    ${category.name}
+                    ${category.icon ? `<span class="me-1">${escapeHtml(category.icon)}</span>` : ''}
+                    ${escapeHtml(category.name)}
                 </div>
             `;
             item.onclick = () => selectCategory(category, input);
@@ -2318,7 +2310,7 @@ function showCategoryDropdown(dropdown, data, input) {
         const createItem = document.createElement('div');
         createItem.className = 'autocomplete-item create-new';
         createItem.innerHTML = `
-            <i class="bi bi-plus-circle me-2"></i>Create "${input.value.trim()}" as new genre
+            <i class="bi bi-plus-circle me-2"></i>Create "${escapeHtml(input.value.trim())}" as new genre
         `;
         createItem.onclick = () => createNewCategory(input.value.trim(), createItem);
         dropdown.appendChild(createItem);
@@ -2638,10 +2630,10 @@ function showDuplicateModal(duplicateResponse) {
     bookInfo.innerHTML = `
         <div class="card">
             <div class="card-body">
-                <h6 class="card-title">${duplicateResponse.book_data.title}</h6>
-                ${duplicateResponse.book_data.author ? `<p class="card-text mb-1"><small class="text-muted">by ${duplicateResponse.book_data.author}</small></p>` : ''}
-                ${duplicateResponse.book_data.isbn13 ? `<p class="card-text mb-0"><small>ISBN-13: ${duplicateResponse.book_data.isbn13}</small></p>` : ''}
-                ${duplicateResponse.book_data.isbn10 ? `<p class="card-text mb-0"><small>ISBN-10: ${duplicateResponse.book_data.isbn10}</small></p>` : ''}
+                <h6 class="card-title">${escapeHtml(duplicateResponse.book_data.title)}</h6>
+                ${duplicateResponse.book_data.author ? `<p class="card-text mb-1"><small class="text-muted">by ${escapeHtml(duplicateResponse.book_data.author)}</small></p>` : ''}
+                ${duplicateResponse.book_data.isbn13 ? `<p class="card-text mb-0"><small>ISBN-13: ${escapeHtml(duplicateResponse.book_data.isbn13)}</small></p>` : ''}
+                ${duplicateResponse.book_data.isbn10 ? `<p class="card-text mb-0"><small>ISBN-10: ${escapeHtml(duplicateResponse.book_data.isbn10)}</small></p>` : ''}
             </div>
         </div>
     `;

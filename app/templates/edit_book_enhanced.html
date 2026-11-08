@@ -1500,7 +1500,7 @@ function selectPerson(item) {
     tag.dataset.name = personName;
     tag.dataset.new = isNew ? 'true' : 'false';
     tag.innerHTML = `
-        ${personName}
+        ${escapeHtml(personName)}
         ${isNew ? '<small class="text-muted"> (new)</small>' : ''}
         <span class="remove" onclick="removeContributor(this)">×</span>
     `;
@@ -1519,9 +1519,11 @@ function createNewPerson(input) {
     const name = input.value.trim();
     if (!name) return;
     
+    const wrapper = input.closest('.contributor-autocomplete');
     selectPerson({
-        dataset: { name: name },
-        closest: () => input.closest('.contributor-autocomplete').querySelector('.contributor-input')
+        dataset: { name: name, new: 'true' },
+        // selectPerson calls closest() for the wrapper and the dropdown, like a real dropdown item
+        closest: (selector) => selector === '.autocomplete-dropdown' ? wrapper.querySelector('.autocomplete-dropdown') : wrapper
     });
 }
 

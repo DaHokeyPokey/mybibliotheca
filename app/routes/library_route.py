@@ -14,7 +14,6 @@ from app.domain.models import MediaType, ReadingStatus
 from app.services import book_service, user_service
 from app.utils.author_sorting import author_first_sort_key_for_book, author_last_sort_key_for_book
 from app.utils.library_search import library_book_matches_query
-from app.utils.simple_cache import cache_get, cache_set, get_user_library_version
 from app.utils.user_settings import get_library_view_defaults
 from .book_route_helpers import _humanize_status
 
@@ -64,15 +63,11 @@ def library():
     effective_cols = cols if cols and cols > 0 else 5
     per_page = max(1, rows) * max(1, effective_cols)
 
-    # Total count first so we can clamp page to a valid range (cache for short TTL)
+    # Total count first so we can clamp page to a valid range.
+    # No in-process cache or version ETags here: Gunicorn workers don't share memory,
+    # so a cache invalidated in one worker kept serving deleted books from the others.
     try:
-        from app.utils.simple_cache import cache_get, cache_set, get_user_library_version
-        _ver = get_user_library_version(str(current_user.id))
-        _tc_key = f"total_count:{current_user.id}:v{_ver}"
-        total_books = cache_get(_tc_key)
-        if total_books is None:
-            total_books = book_service.get_total_book_count_sync()
-            cache_set(_tc_key, int(total_books or 0), ttl_seconds=300)
+        total_books = int(book_service.get_user_book_count_sync(str(current_user.id)) or 0)
     except Exception:
         total_books = 0
 
@@ -98,28 +93,11 @@ def library():
     ])
     if has_filter:
         try:
-            # Use short-lived cache for expensive all-books call
-            from app.utils.simple_cache import cache_get, cache_set, get_user_library_version
-            version = get_user_library_version(str(current_user.id))
-            cache_key = f"all_books_overlay_flat:{current_user.id}:v{version}:v2"
-            user_books = cache_get(cache_key)
-            if user_books is None:
-                user_books = book_service.get_all_books_with_user_overlay_flat_sync(str(current_user.id))
-                cache_set(cache_key, user_books, ttl_seconds=120)
+            user_books = book_service.get_all_books_with_user_overlay_flat_sync(str(current_user.id))
         except Exception:
             user_books = []
     else:
-        # Cache paginated slice for short TTL
-        try:
-            from app.utils.simple_cache import cache_get, cache_set, get_user_library_version
-            version = get_user_library_version(str(current_user.id))
-            cache_key = f"books_page:{current_user.id}:{per_page}:{offset}:{sort_option}:v{version}"
-            user_books = cache_get(cache_key)
-            if user_books is None:
-                user_books = book_service.get_books_with_user_overlay_paginated_sync(str(current_user.id), per_page, offset, sort_option)
-                cache_set(cache_key, user_books, ttl_seconds=60)
-        except Exception:
-            user_books = book_service.get_books_with_user_overlay_paginated_sync(str(current_user.id), per_page, offset, sort_option)
+        user_books = book_service.get_books_with_user_overlay_paginated_sync(str(current_user.id), per_page, offset, sort_option)
     
     # Add location debugging via debug system
     from app.debug_system import debug_log
@@ -385,15 +363,7 @@ def library():
         }
     else:
         try:
-            from app.utils.simple_cache import cache_get, cache_set, get_user_library_version
-            _ver = get_user_library_version(str(current_user.id))
-            # Include a small schema/version suffix to invalidate older cached shapes
-            # (prevents lingering broken counts after upgrades).
-            _sc_key = f"status_counts:{current_user.id}:v{_ver}:v2"
-            global_counts = cache_get(_sc_key)
-            if global_counts is None:
-                global_counts = book_service.get_library_status_counts_sync(str(current_user.id))
-                cache_set(_sc_key, global_counts, ttl_seconds=180)
+            global_counts = book_service.get_library_status_counts_sync(str(current_user.id))
         except Exception:
             global_counts = {'read': 0, 'currently_reading': 0, 'plan_to_read': 0, 'on_hold': 0, 'wishlist': 0}
 
@@ -895,12 +865,6 @@ def library():
                 'needs_review': getattr(b, 'needs_review', None) if not isinstance(b, dict) else b.get('needs_review'),
             }
             payload.append(bd)
-        # ETag based on user, page/filter/sort, and version
-        from app.utils.simple_cache import get_user_library_version
-        version = get_user_library_version(str(current_user.id))
-        etag = f"W/\"lib:{current_user.id}:{page}:{rows}:{cols}:{per_page}:{status_filter}:{category_filter}:{publisher_filter}:{language_filter}:{location_filter}:{media_type_filter}:{finished_after_raw}:{finished_before_raw}:{search_query}:{sort_option}:{int(needs_review_only)}:v{version}\""
-        if request.headers.get('If-None-Match') == etag:
-            return ('', 304)
         resp = make_response(jsonify({
             'items': payload,
             'page': page,
@@ -908,16 +872,9 @@ def library():
             'total_pages': total_pages,
             'total': (len(filtered_books) if has_filter else total_books)
         }))
-        resp.headers['ETag'] = etag
         resp.headers['Cache-Control'] = 'private, max-age=0, must-revalidate'
         return resp
 
-    # ETag for HTML response too
-    from app.utils.simple_cache import get_user_library_version
-    _version = get_user_library_version(str(current_user.id))
-    _html_etag = f"W/\"libhtml:{current_user.id}:{page}:{rows}:{cols}:{per_page}:{status_filter}:{category_filter}:{publisher_filter}:{language_filter}:{location_filter}:{media_type_filter}:{finished_after_raw}:{finished_before_raw}:{search_query}:{sort_option}:{int(needs_review_only)}:v{_version}\""
-    if request.headers.get('If-None-Match') == _html_etag:
-        return ('', 304)
 
     resp = make_response(render_template(
         'library_enhanced.html',
@@ -954,7 +911,6 @@ def library():
         category_options=category_options,
         filter_records=filter_records
     ))
-    resp.headers['ETag'] = _html_etag
     resp.headers['Cache-Control'] = 'private, max-age=0, must-revalidate'
     # Hint the browser to warm the next page JSON in the background
     try:

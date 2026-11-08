@@ -7,11 +7,10 @@ from werkzeug.datastructures import MultiDict
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.infrastructure import persistence_state
+from backend_stub import kuzu_backend, kuzu_backend_for_module  # noqa: E402,F401 - autouse fixture
 
-persistence_state.get_persistence_state = lambda: {"backend": "kuzu", "migration_run_id": None}
-
-import app.routes.book_routes as br  # noqa: E402
+with kuzu_backend():  # importing route modules probes the active backend
+    import app.routes.book_routes as br
 
 
 class _Loc:

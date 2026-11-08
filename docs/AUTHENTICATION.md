@@ -1,5 +1,7 @@
 # 🔐 Bibliotheca V2.0 Authentication Guide
 
+> ⚠️ **Outdated:** This guide describes the pre-3.0 SQLAlchemy/SQLite implementation. Version 3.0.1 stores data in PostgreSQL; see [DEPLOYMENT.md](DEPLOYMENT.md) for current setup and [ADMIN_TOOLS.md](ADMIN_TOOLS.md) for account recovery.
+
 This guide covers the multi-user authentication system introduced in Bibliotheca V2.0.
 
 ## Overview

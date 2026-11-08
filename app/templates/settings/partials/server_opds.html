@@ -65,7 +65,7 @@
           <label class="form-label">HTTP Password</label>
           <div class="input-group">
             <button type="button" class="btn btn-outline-secondary" id="opdsRevealPasswordBtn" aria-label="Hold to reveal password" title="Hold to reveal password"><i class="bi bi-eye"></i></button>
-            <input type="password" name="password" class="form-control" autocomplete="password" placeholder="{% if settings.password_present %}•••••• (unchanged){% else %}Optional{% endif %}" value="{{ settings.password_value or '' }}">
+            <input type="password" name="password" class="form-control" autocomplete="password" placeholder="{% if settings.password_present %}•••••• (unchanged){% else %}Optional{% endif %}" value="">
             {% if settings.password_present %}
               <button type="button" class="btn btn-outline-secondary" id="opdsClearPasswordBtn"><i class="bi bi-eraser"></i></button>
             {% endif %}

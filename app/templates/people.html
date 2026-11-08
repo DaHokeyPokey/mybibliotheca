@@ -662,7 +662,7 @@ function deleteSelected() {
             <h6><i class="bi bi-check-circle"></i> ${peopleWithoutBooks.length} person(s) can be safely deleted:</h6>
             <ul class="mb-0">`;
         peopleWithoutBooks.slice(0, 8).forEach(name => {
-            modalContent += `<li>${name}</li>`;
+            modalContent += `<li>${escapeHtml(name)}</li>`;
         });
         if (peopleWithoutBooks.length > 8) {
             modalContent += `<li><em>... and ${peopleWithoutBooks.length - 8} more</em></li>`;
@@ -675,7 +675,7 @@ function deleteSelected() {
             <h6><i class="bi bi-exclamation-triangle"></i> ${peopleWithBooks.length} person(s) have associated books (${totalBooks} total):</h6>
             <ul class="mb-2">`;
         peopleWithBooks.slice(0, 8).forEach(person => {
-            modalContent += `<li>${person.name} <span class="badge bg-secondary">${person.books} book${person.books > 1 ? 's' : ''}</span></li>`;
+            modalContent += `<li>${escapeHtml(person.name)} <span class="badge bg-secondary">${person.books} book${person.books > 1 ? 's' : ''}</span></li>`;
         });
         if (peopleWithBooks.length > 8) {
             modalContent += `<li><em>... and ${peopleWithBooks.length - 8} more</em></li>`;

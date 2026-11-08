@@ -80,6 +80,25 @@ ONBOARDING_STEPS = {
     5: 'confirmation'
 }
 
+# The wizard logs the new admin in, then shows these pages.
+_POST_SETUP_ENDPOINTS = {'onboarding.complete', 'onboarding.import_progress', 'onboarding.import_progress_json'}
+
+
+@onboarding_bp.before_request
+def _block_onboarding_after_setup():
+    """Onboarding creates an admin account, so it must close once any user exists."""
+    try:
+        if user_service.get_user_count_sync() == 0:
+            return None
+    except Exception as exc:
+        logger.error(f"Onboarding guard could not read the user count: {exc}")
+        return redirect(url_for('auth.login'))
+    if current_user.is_authenticated:
+        if request.endpoint in _POST_SETUP_ENDPOINTS:
+            return None
+        return redirect(url_for('main.library'))
+    return redirect(url_for('auth.login'))
+
 
 
 

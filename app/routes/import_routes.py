@@ -2319,9 +2319,14 @@ async def process_simple_import(import_config):
             pass
 
         source_filename = os.path.basename(csv_file_path)
+        cancelled = False
         with open(csv_file_path, 'r', encoding=_CSV_ENCODING, errors=_CSV_ERRORS, newline='') as fh:
             reader = csv.DictReader(fh)
             for row_num, row in enumerate(reader, 1):
+                # Honour the Cancel button; every 25 rows keeps job-store reads cheap.
+                if row_num % 25 == 1 and (safe_get_import_job(user_id, task_id) or {}).get('cancelled'):
+                    cancelled = True
+                    break
                 try:
                     simplified_book = simplified_service.build_book_data_from_row(row, mappings)
                     # Allow ISBN-only rows (title may be filled after enrichment). Skip only if missing both title and ISBN.
@@ -2358,6 +2363,7 @@ async def process_simple_import(import_config):
 
                     # After enrichment, if this was an ISBN-only row and we failed to retrieve metadata (no real title), record error instead of creating placeholder book
                     isbn_key = simplified_book.isbn13 or simplified_book.isbn10
+                    unanswered_lookup = False
                     if isbn_key and enable_api_enrichment:
                         # Consider presence of either ISBN form in metadata map
                         in_meta = isbn_key in book_metadata or (simplified_book.isbn13 and simplified_book.isbn13 in book_metadata) or (simplified_book.isbn10 and simplified_book.isbn10 in book_metadata)
@@ -2398,7 +2404,13 @@ async def process_simple_import(import_config):
                                 attempts = int((fail or {}).get('attempt') or 1)
                             except Exception:
                                 reason, attempts = None, 1
+                            # Capped, out-of-time-budget or timed-out lookups never got an answer: keep the
+                            # row as Needs Review (as the progress message promises) instead of dropping it.
+                            unanswered_lookup = (not in_meta) and reason in (None, 'capped', 'timeout')
+                            if unanswered_lookup:
+                                simplified_book.title = isbn_key
 
+                        if lookup_failed and (not has_input_title) and not unanswered_lookup:
                             processed_count += 1
                             error_count += 1
                             raw_isbn = row.get('ISBN13') or row.get('ISBN') or row.get('ISBN/UID') or row.get('isbn') or ''
@@ -2477,7 +2489,7 @@ async def process_simple_import(import_config):
                     # This keeps the import permissive (titles still import) while making gaps visible.
                     try:
                         has_isbn = bool(getattr(simplified_book, 'isbn13', None) or getattr(simplified_book, 'isbn10', None))
-                        if not has_isbn:
+                        if not has_isbn or unanswered_lookup:
                             personal_metadata_for_import.setdefault('needs_review', 'Needs Review')
                     except Exception:
                         pass
@@ -2710,19 +2722,10 @@ async def process_simple_import(import_config):
             )
             pending_processed_entries.clear()
 
-        final_activity = f"Import completed! {success_count} new, {merged_count} merged, {error_count} errors, {skipped_count} skipped"
-
-        # Invalidate Library page ETag cache for this user so a normal refresh
-        # shows newly imported books immediately.
-        if success_count > 0 or merged_count > 0:
-            try:
-                from app.utils.simple_cache import bump_user_library_version
-                bump_user_library_version(str(user_id))
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.warning(f"Failed to bump library version after import: {exc}")
+        final_activity = f"Import {'cancelled' if cancelled else 'completed!'} {success_count} new, {merged_count} merged, {error_count} errors, {skipped_count} skipped"
 
         completion_updates = {
-            'status': 'completed',
+            'status': 'cancelled' if cancelled else 'completed',
             'processed': processed_count,
             'success': success_count,
             'merged': merged_count,

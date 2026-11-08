@@ -150,13 +150,13 @@ document.addEventListener('DOMContentLoaded', function() {
         
         if (data.supported) {
             html += '<div class="row">';
-            html += '<div class="col-6"><strong>Version:</strong> ' + data.version + '</div>';
-            html += '<div class="col-6"><strong>Books:</strong> ' + data.book_count + '</div>';
+            html += '<div class="col-6"><strong>Version:</strong> ' + escapeHtml(data.version) + '</div>';
+            html += '<div class="col-6"><strong>Books:</strong> ' + escapeHtml(data.book_count) + '</div>';
             html += '</div>';
             
             if (data.user_info) {
                 html += '<div class="mt-2">';
-                html += '<strong>Admin User:</strong> ' + data.user_info.username + ' (' + data.user_info.email + ')';
+                html += '<strong>Admin User:</strong> ' + escapeHtml(data.user_info.username) + ' (' + escapeHtml(data.user_info.email) + ')';
                 html += '</div>';
                 
                 // Show admin user option for v1.5
@@ -169,7 +169,7 @@ document.addEventListener('DOMContentLoaded', function() {
             migrationOptions.style.display = 'block';
             submitBtn.disabled = false;
         } else {
-            html = '<strong>Unsupported database format:</strong> ' + data.version;
+            html = '<strong>Unsupported database format:</strong> ' + escapeHtml(data.version);
             detectionResults.className = 'alert alert-warning';
             migrationOptions.style.display = 'none';
             submitBtn.disabled = true;
@@ -179,7 +179,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     function showError(message) {
-        detectionContent.innerHTML = '<strong>Error:</strong> ' + message;
+        detectionContent.innerHTML = '<strong>Error:</strong> ' + escapeHtml(message);
         detectionResults.className = 'alert alert-danger';
         migrationOptions.style.display = 'none';
         submitBtn.disabled = true;

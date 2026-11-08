@@ -4,9 +4,9 @@
 
 ---
 
-MyBibliotheca is a self-hosted personal library management system and reading tracker built with Flask and SQLAlchemy. It serves as an open-source alternative to Goodreads, StoryGraph, and similar services, offering complete control over your reading data with multi-user support and advanced privacy controls.
+MyBibliotheca is a self-hosted personal library management system and reading tracker built with Flask and PostgreSQL. It serves as an open-source alternative to Goodreads, StoryGraph, and similar services, offering complete control over your reading data with multi-user support and advanced privacy controls.
 
-> ⚠️ **Important:** Version 1.1.1 is now officially deprecated. The stable release is **2.0.1**. Please update all deployments and references to use the new version.
+> ⚠️ **Important:** Version 1.1.1 is now officially deprecated. The stable release is **3.0.1**. Please update all deployments and references to use the new version.
 
 ## Table of Contents
 
@@ -38,7 +38,7 @@ MyBibliotheca is a comprehensive personal library management system that allows 
 
 - **Self-hosted:** Complete control over your data
 - **Multi-user:** Secure authentication with isolated user data
-- **SQLite Database:** Lightweight, file-based database storage
+- **PostgreSQL Database:** Runs alongside the app in Docker Compose
 - **Flask Framework:** Modern Python web framework
 - **Responsive Design:** Mobile-friendly Bootstrap UI
 - **Privacy-focused:** Granular privacy controls for sharing
@@ -366,8 +366,8 @@ MyBibliotheca is licensed under the MIT License. See the [LICENSE file on GitHub
 
 ---
 
-**Version:** 2.0.1
-**Last Updated:** November 2025  
-**Framework:** Flask + SQLAlchemy  
-**Database:** SQLite  
-**Docker Image:** `pickles4evaaaa/mybibliotheca:2.0.1`
+**Version:** 3.0.1
+**Last Updated:** November 2026  
+**Framework:** Flask  
+**Database:** PostgreSQL  
+**Docker Image:** `pickles4evaaaa/mybibliotheca:3.0.1`

@@ -260,6 +260,20 @@ class PostgresLocationService:
                 return [_location_cache(_location(row)) for row in cursor.fetchall()]
         return [_location_from_cache(row) for row in self._cached_query(key, ("postgres:locations", "postgres:books"), read)]
 
+    def get_first_location_ids_sync(self, book_ids: list[str]) -> dict[str, str]:
+        """First location of each book (same order as get_book_locations), in one query."""
+        if not book_ids:
+            return {}
+        with self.store.connection() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT DISTINCT ON (links.book_id) links.book_id, l.id "
+                "FROM locations l JOIN " + _LOCATION_LINKS + " links ON links.location_id=l.id "
+                "WHERE links.book_id = ANY(%s) "
+                "ORDER BY links.book_id, l.is_default DESC NULLS LAST, l.name, l.id",
+                (list(book_ids),),
+            )
+            return {str(book_id): str(location_id) for book_id, location_id in cursor.fetchall()}
+
     def set_book_location(self, book_id: str, location_id: str | None, user_id: str) -> bool:
         try:
             with self.store.transaction() as connection, connection.cursor() as cursor:

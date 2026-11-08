@@ -215,7 +215,6 @@
                                      data-start-page="{{ log.start_page or '' }}"
                                      data-end-page="{{ log.end_page or '' }}"
                                      data-time-read="{{ log.time_read or '' }}"
-                                     onclick="showLogDetails('{{ log.id }}')"
                                      style="cursor: pointer;"
                                      title="{{ log.title }} by {{ log.authors_text }}{% if log.pages_read %} - {{ log.pages_read }} pages{% endif %}{% if log.time_read %} - {{ log.time_read }} min{% endif %}
 📅 {{ log.log_date }}
@@ -242,7 +241,6 @@ Click for details"
                                      data-cluster-count="{{ cluster.count }}"
                                      data-cluster-date="{{ cluster.date }}"
                                      data-cluster-logs="{{ cluster.logs | map(attribute='id') | join(',') }}"
-                                     onclick="showClusterDetails(this)"
                                      style="cursor: pointer;"
                                      title="Click to view {{ cluster.count }} reading sessions">
                                     <div class="cluster-circle-small">
@@ -1083,102 +1081,7 @@ function initializeEventHandlers() {
         });
     });
 }
-    text-align: center;
-    line-height: 1;
-    padding: 2px;
-}
-
-/* Cluster Circles in Calendar */
-.calendar-cluster {
-    cursor: pointer;
-    margin: 2px;
-    transition: transform 0.2s ease;
-    max-width: fit-content;
-}
-
-.calendar-cluster:hover {
-    transform: scale(1.1);
-    z-index: 10;
-}
-
-.cluster-circle-small {
-    width: 30px;
-    height: 30px;
-    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
-    border: 2px solid white;
-    border-radius: 50%;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: white;
-    font-weight: bold;
-    font-size: 0.8rem;
-}
-
-.calendar-cluster:hover .cluster-circle-small {
-    background: linear-gradient(135deg, #0056b3 0%, #003d82 100%);
-    box-shadow: 0 4px 10px rgba(0,0,0,0.4);
-}
-
-/* Responsive Design */
-@media (max-width: 768px) {
-    .calendar-day {
-        min-height: 80px;
-        padding: 4px;
-    }
-    
-    .book-cover-small {
-        width: 20px;
-        height: 28px;
-    }
-    
-    .book-placeholder-small {
-        width: 20px;
-        height: 28px;
-        font-size: 0.5rem;
-    }
-    
-    .cluster-circle-small {
-        width: 25px;
-        height: 25px;
-        font-size: 0.7rem;
-    }
-    
-    .day-number {
-        font-size: 0.8rem;
-    }
-}
-
-@media (max-width: 576px) {
-    .calendar-day {
-        min-height: 60px;
-        padding: 2px;
-    }
-    
-    .book-cover-small {
-        width: 15px;
-        height: 20px;
-    }
-    
-    .book-placeholder-small {
-        width: 15px;
-        height: 20px;
-        font-size: 0.4rem;
-    }
-    
-    .cluster-circle-small {
-        width: 20px;
-        height: 20px;
-        font-size: 0.6rem;
-    }
-    
-    .calendar-day-header {
-        padding: 8px 4px;
-        font-size: 0.8rem;
-    }
-}
-</style>
+</script>
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
@@ -1192,43 +1095,6 @@ document.addEventListener('DOMContentLoaded', function() {
     document.querySelectorAll('.calendar-book').forEach(function(bookEl) {
         bookEl.addEventListener('click', function() {
             showBookModal(this);
-        });
-    });
-    
-    // Handle cluster clicks
-    document.querySelectorAll('.calendar-cluster').forEach(function(clusterEl) {
-        clusterEl.addEventListener('click', function() {
-            try {
-                const bookCount = parseInt(this.getAttribute('data-cluster-count'));
-                const date = this.getAttribute('data-cluster-date');
-                
-                // Extract book data from individual attributes
-                const books = [];
-                for (let i = 0; i < bookCount; i++) {
-                    const book = {
-                        id: this.getAttribute(`data-book-${i}-id`),
-                        uid: this.getAttribute(`data-book-${i}-uid`),
-                        title: this.getAttribute(`data-book-${i}-title`),
-                        authors_text: this.getAttribute(`data-book-${i}-authors`),
-                        reading_status: this.getAttribute(`data-book-${i}-status`),
-                        status_color: this.getAttribute(`data-book-${i}-status-color`),
-                        cover_url: this.getAttribute(`data-book-${i}-cover`),
-                        user_rating: this.getAttribute(`data-book-${i}-rating`),
-                        page_count: this.getAttribute(`data-book-${i}-pages`),
-                        categories_text: this.getAttribute(`data-book-${i}-categories`),
-                        personal_notes: this.getAttribute(`data-book-${i}-notes`),
-                        date_added: this.getAttribute(`data-book-${i}-date`),
-                        display_title: this.getAttribute(`data-book-${i}-display-title`)
-                    };
-                    books.push(book);
-                }
-                
-                showClusterModal(books, date);
-                
-            } catch (error) {
-                console.error('Error parsing cluster data:', error);
-                alert('Failed to load cluster books: ' + error.message);
-            }
         });
     });
 });
@@ -1446,16 +1312,17 @@ function showLogDetails(logId) {
     const logElement = document.querySelector(`[data-log-id="${logId}"]`);
     if (!logElement) return;
     
-    const bookTitle = logElement.dataset.bookTitle;
-    const bookAuthors = logElement.dataset.bookAuthors;
+    // Values below are written into the modal as HTML, so escape them on read.
+    const bookTitle = escapeHtml(logElement.dataset.bookTitle);
+    const bookAuthors = escapeHtml(logElement.dataset.bookAuthors);
     const logDate = logElement.dataset.logDate;
     const readingStatus = logElement.dataset.readingStatus;
-    const notes = logElement.dataset.notes || '';
-    const pagesCurrent = logElement.dataset.pagesCurrent || '';
-    const pagesTotal = logElement.dataset.pagesTotal || '';
-    const progressPercent = logElement.dataset.progressPercent || '';
-    const startPage = logElement.dataset.startPage || '';
-    const endPage = logElement.dataset.endPage || '';
+    const notes = escapeHtml(logElement.dataset.notes);
+    const pagesCurrent = escapeHtml(logElement.dataset.pagesCurrent);
+    const pagesTotal = escapeHtml(logElement.dataset.pagesTotal);
+    const progressPercent = escapeHtml(logElement.dataset.progressPercent);
+    const startPage = escapeHtml(logElement.dataset.startPage);
+    const endPage = escapeHtml(logElement.dataset.endPage);
     const timeRead = logElement.dataset.timeRead || '';
     
     // Build progress information
@@ -1537,23 +1404,23 @@ function showLogDetails(logId) {
 
 function showClusterDetails(clusterElement) {
     const clusterDate = clusterElement.dataset.clusterDate;
-    const clusterCount = clusterElement.dataset.clusterCount;
+    const clusterCount = escapeHtml(clusterElement.dataset.clusterCount);
     
     // Find all log data for this cluster
     const logDataElements = document.querySelectorAll(`[data-cluster-date="${clusterDate}"].cluster-log-data`);
     
     let logsHtml = '';
     logDataElements.forEach((logData, index) => {
-        const bookTitle = logData.dataset.bookTitle;
-        const bookAuthors = logData.dataset.bookAuthors;
+        const bookTitle = escapeHtml(logData.dataset.bookTitle);
+        const bookAuthors = escapeHtml(logData.dataset.bookAuthors);
         const logDate = logData.dataset.logDate;
         const readingStatus = logData.dataset.readingStatus;
-        const notes = logData.dataset.notes || '';
-        const pagesCurrent = logData.dataset.pagesCurrent || '';
-        const pagesTotal = logData.dataset.pagesTotal || '';
-        const progressPercent = logData.dataset.progressPercent || '';
-        const startPage = logData.dataset.startPage || '';
-        const endPage = logData.dataset.endPage || '';
+        const notes = escapeHtml(logData.dataset.notes);
+        const pagesCurrent = escapeHtml(logData.dataset.pagesCurrent);
+        const pagesTotal = escapeHtml(logData.dataset.pagesTotal);
+        const progressPercent = escapeHtml(logData.dataset.progressPercent);
+        const startPage = escapeHtml(logData.dataset.startPage);
+        const endPage = escapeHtml(logData.dataset.endPage);
         const timeRead = logData.dataset.timeRead || '';
         
         // Build metrics for this log

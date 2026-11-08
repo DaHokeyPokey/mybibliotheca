@@ -1768,7 +1768,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 fetch(`{{ url_for('simple_backup.api_backup_settings') }}`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': window.csrfToken },
                     body: JSON.stringify(payload),
                     credentials: 'same-origin'
                 })

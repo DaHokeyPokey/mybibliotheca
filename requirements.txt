@@ -19,8 +19,6 @@ pytesseract==0.3.13
 numpy==2.5.4
 gunicorn==26.2.0
 psutil==7.2.2
-scrypt==0.9.4
-cryptography==50.0.2
 
 # Optional Redis for production sessions
 redis==8.1.0

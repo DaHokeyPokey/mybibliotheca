@@ -282,7 +282,7 @@ code {
 <script>
 // Highlight search terms in results
 document.addEventListener('DOMContentLoaded', function() {
-    const query = '{{ query | safe }}';
+    const query = {{ query|tojson }};
     if (query && query.length > 2) {
         highlightSearchTerms(query.toLowerCase());
     }

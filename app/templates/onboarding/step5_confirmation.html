@@ -567,13 +567,6 @@ function confirmSetupAndDisable(button) {
                 
                 console.log('🚨 Added action=execute hidden input to form');
                 
-                // Log all form data before submission
-                const formData = new FormData(form);
-                console.log('🚨 Form data before manual submit:');
-                for (let [key, value] of formData.entries()) {
-                    console.log(`  ${key}: ${value}`);
-                }
-                
                 form.submit();
             } else {
                 console.log('🚨 ERROR: Form not found!');
@@ -617,8 +610,6 @@ document.addEventListener('DOMContentLoaded', function() {
             console.log('  - Button type:', button.type);
             console.log('  - Button name:', button.name);
             console.log('  - Button value:', button.value);
-            console.log('  - Form data:', new FormData(form));
-            console.log('  - CSRF token:', document.querySelector('input[name="csrf_token"]')?.value);
         });
         
         form.addEventListener('submit', function(e) {
@@ -630,11 +621,6 @@ document.addEventListener('DOMContentLoaded', function() {
             console.log('  - Form method:', form.method);
             console.log('  - Form valid:', form.checkValidity());
             console.log('  - Button action value:', button.value);
-            console.log('  - All form data:');
-            const formData = new FormData(form);
-            for (let [key, value] of formData.entries()) {
-                console.log(`    ${key}: ${value}`);
-            }
         });
         
         // Add beforeunload listener to catch any navigation

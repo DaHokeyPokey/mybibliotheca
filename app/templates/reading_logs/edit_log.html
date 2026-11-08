@@ -573,12 +573,12 @@ function updateBookDisplay(title, author, isBook) {
     
     if (isBook) {
         displayDiv.innerHTML = `
-            <strong>${title}</strong>
-            ${author ? `<br><small class="text-muted">by ${author}</small>` : ''}
+            <strong>${escapeHtml(title)}</strong>
+            ${author ? `<br><small class="text-muted">by ${escapeHtml(author)}</small>` : ''}
         `;
     } else {
         displayDiv.innerHTML = `
-            <strong>${title}</strong>
+            <strong>${escapeHtml(title)}</strong>
             <br><small class="text-muted">No specific book</small>
         `;
     }

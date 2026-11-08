@@ -2,6 +2,8 @@
 
 This document outlines how Bibliotheca handles differences between operating systems to ensure consistent behavior across Windows, macOS, and Linux.
 
+> ⚠️ **Outdated:** References to a SQLite `books.db` file describe the pre-3.0 storage. Version 3.0.1 stores data in PostgreSQL; see [DEPLOYMENT.md](DEPLOYMENT.md).
+
 ## 🖥️ Platform-Specific Considerations
 
 ### **File Permissions**

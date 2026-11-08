@@ -633,25 +633,6 @@ def _fetch_openlibrary_by_isbn(isbn: str) -> Dict[str, Any]:
 			return out
 
 		# Series may appear explicitly in OL 'series' field (string or list)
-		def _extract_series(val):
-			if not val:
-				return None
-			try:
-				if isinstance(val, list) and val:
-					candidate = str(val[0])
-				elif isinstance(val, str):
-					candidate = val
-				else:
-					return None
-				candidate = candidate.strip()
-				# Strip a leading 'Series:' if present and any trailing parenthetical like '(1)'
-				import re as _re
-				candidate = _re.sub(r'^\s*Series\s*:\s*', '', candidate, flags=_re.IGNORECASE)
-				candidate = _re.sub(r'\s*\([^)]*\)\s*$', '', candidate).strip()
-				return candidate or None
-			except Exception:
-				return None
-
 		series_value = _extract_series_label(ol.get('series'))
 
 		base_categories = _norm_subjects(ol.get('subjects'))

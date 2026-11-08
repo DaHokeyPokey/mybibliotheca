@@ -428,7 +428,7 @@
                                         <div class="col-md-6">
                                             <label for="openai_api_key" class="form-label">API Key</label>
                                             <input type="password" class="form-control" id="openai_api_key" name="openai_api_key" 
-                                                   value="{{ ai_config.get('OPENAI_API_KEY', '') if ai_config else '' }}" placeholder="sk-...">
+                                                   value="" placeholder="{{ '•••••• (unchanged)' if ai_config and ai_config.get('OPENAI_API_KEY') else 'sk-...' }}" autocomplete="new-password">
                                             <small class="form-text text-muted">Your OpenAI API key</small>
                                         </div>
                                         <div class="col-md-6">
@@ -615,9 +615,9 @@
                                         <div class="col-md-6">
                                             <label for="smtp_password" class="form-label">Password</label>
                                             <input type="password" class="form-control" id="smtp_password" name="smtp_password" 
-                                                   value="{{ smtp_config.get('smtp_password', '') if smtp_config else '' }}" 
+                                                   value="" 
                                                    placeholder="••••••••" autocomplete="new-password">
-                                            <small class="form-text text-muted">SMTP authentication password or app password</small>
+                                            <small class="form-text text-muted">SMTP authentication password or app password. Leave blank to keep the saved one.</small>
                                         </div>
                                     </div>
                                 </div>

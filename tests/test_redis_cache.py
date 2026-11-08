@@ -2,6 +2,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from app.infrastructure import redis_cache
+from backend_stub import kuzu_backend_for_module  # noqa: F401 - autouse fixture; a Kuzu test here checks the backend
 
 
 class FakeRedis:

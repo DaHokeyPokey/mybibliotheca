@@ -20,7 +20,7 @@
         </div>
         <div class="col-md-4">
           <label class="form-label">Personal API Key</label>
-          <input type="password" name="abs_api_key" class="form-control" value="{{ settings.abs_api_key or '' }}" autocomplete="off" placeholder="Your ABS API token" {% if not is_enabled %}disabled{% endif %} />
+          <input type="password" name="abs_api_key" class="form-control" value="" autocomplete="off" placeholder="{{ '•••••• (unchanged)' if settings.abs_api_key else 'Your ABS API token' }}" {% if not is_enabled %}disabled{% endif %} />
           <small class="text-muted">Stored only for your account.</small>
         </div>
         <div class="col-md-4">

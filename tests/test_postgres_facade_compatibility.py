@@ -58,7 +58,7 @@ def test_get_books_for_user_passes_pagination_as_keywords():
 
     facade = PostgresServiceFacade.__new__(PostgresServiceFacade)
     facade.library_service = LibraryService()
-    facade._overlay_to_book = lambda row: row
+    facade._overlay_to_books = lambda rows: rows
 
     assert facade.get_books_for_user("user-1", 17, 34) == [{"id": "book-1"}]
 
