@@ -3,6 +3,8 @@
 import json
 import socket
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -234,6 +236,45 @@ def test_cover_redirect_to_other_host_drops_credentials(monkeypatch):
     assert "auth" not in calls[1][1] and "headers" not in calls[1][1]
 
 
+@pytest.mark.parametrize("target", ["http://cdn.example/c.jpg", "https://cdn.example:8443/c.jpg"], ids=["plain-http", "other-port"])
+def test_cover_redirect_on_the_same_host_drops_credentials_when_the_origin_changes(monkeypatch, target):
+    calls = _fake_net(monkeypatch, {"https://cdn.example/c.jpg": _Resp(location=target), target: _Resp()})
+
+    image_processing.process_image_from_url("https://cdn.example/c.jpg", auth=("u", "p"), headers={"Authorization": "Bearer t"})
+
+    assert "auth" not in calls[1][1] and "headers" not in calls[1][1]
+
+
+def test_cover_redirect_does_not_give_credentials_back_later(monkeypatch):
+    calls = _fake_net(monkeypatch, {
+        "https://cdn.example/c.jpg": _Resp(location="http://cdn.example/d.jpg"),
+        "http://cdn.example/d.jpg": _Resp(location="https://cdn.example/e.jpg"),
+        "https://cdn.example/e.jpg": _Resp(),
+    })
+
+    image_processing.process_image_from_url("https://cdn.example/c.jpg", auth=("u", "p"), headers={"Authorization": "Bearer t"})
+
+    assert "auth" not in calls[2][1] and "headers" not in calls[2][1]
+
+
+@pytest.mark.parametrize(
+    "start, target",
+    [
+        ("https://cdn.example/c.jpg", "https://cdn.example/d.jpg"),
+        ("https://cdn.example/c.jpg", "https://cdn.example:443/d.jpg"),
+        ("http://cdn.example/c.jpg", "https://cdn.example/c.jpg"),
+    ],
+    ids=["same-origin", "explicit-default-port", "upgrade-to-https"],
+)
+def test_cover_redirect_keeps_credentials_when_the_origin_is_safe(monkeypatch, start, target):
+    calls = _fake_net(monkeypatch, {start: _Resp(location=target), target: _Resp()})
+    headers = {"Authorization": "Bearer t"}
+
+    image_processing.process_image_from_url(start, auth=("u", "p"), headers=headers)
+
+    assert calls[1][1]["auth"] == ("u", "p") and calls[1][1]["headers"] == headers
+
+
 def test_cover_redirect_loop_is_cut_off(monkeypatch):
     _fake_net(monkeypatch, {"https://cdn.example/c.jpg": _Resp(location="https://cdn.example/c.jpg")})
     with pytest.raises(ValueError):
@@ -455,6 +496,54 @@ def test_backup_list_includes_backups_made_by_another_worker(monkeypatch, tmp_pa
     worker_b._backup_index["b1"] = info
     worker_b._save_backup_index()
     assert [b.id for b in worker_a.list_backups()] == ["b1"]
+
+
+def _backup_info(tmp_path, backup_id):
+    return backup_module.SimpleBackupInfo(
+        id=backup_id, name="nightly", created_at=datetime.now(), file_path=str(tmp_path / f"{backup_id}.zip"),
+        file_size=1, description="", metadata={})
+
+
+def test_backup_index_writers_do_not_share_a_temp_file(monkeypatch, tmp_path):
+    worker_a = _backup_service(monkeypatch, tmp_path)
+    worker_b = _backup_service(monkeypatch, tmp_path)
+    worker_a._backup_index = {"short": _backup_info(tmp_path, "short")}
+    worker_b._backup_index = {f"b{number}": _backup_info(tmp_path, f"b{number}") for number in range(5)}
+    temp_files, real_dump = [], json.dump
+
+    def dump_while_the_other_worker_publishes(data, handle, **kwargs):
+        temp_files.append(handle.name)
+        if len(temp_files) == 1:
+            worker_b._save_backup_index()
+        real_dump(data, handle, **kwargs)
+
+    monkeypatch.setattr(backup_module.json, "dump", dump_while_the_other_worker_publishes)
+    worker_a._save_backup_index()
+
+    assert temp_files[0] != temp_files[1]
+    assert list(json.loads(worker_a.backup_index_file.read_text())) == ["short"]
+    assert not list(tmp_path.rglob("*.tmp"))
+
+
+@pytest.mark.parametrize(
+    "change",
+    [lambda service, info: service._record_backup(info), lambda service, info: service.delete_backup(info.id)],
+    ids=["record", "delete"],
+)
+def test_changing_the_backup_index_waits_for_the_other_worker(monkeypatch, tmp_path, change):
+    fcntl = pytest.importorskip("fcntl")
+    service = _backup_service(monkeypatch, tmp_path)
+    info = _backup_info(tmp_path, "b1")
+    service._record_backup(info)
+
+    with open(service.backup_index_file.with_suffix(".json.lock"), "a") as other_worker:
+        fcntl.flock(other_worker, fcntl.LOCK_EX)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            changing = pool.submit(change, service, info)
+            time.sleep(0.3)
+            assert not changing.done()
+            fcntl.flock(other_worker, fcntl.LOCK_UN)
+            changing.result(timeout=10)
 
 
 def _opds_due(monkeypatch, *, holds_lock):

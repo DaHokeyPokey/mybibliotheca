@@ -79,3 +79,67 @@ def test_postgres_backup_restore_round_trip_and_rejects_corrupt_archive(monkeypa
         assert (covers_dir / "cover.txt").read_text(encoding="utf-8") == "original cover"
     finally:
         store.close()
+
+
+def test_a_backup_from_before_migration_7_restores_on_the_upgraded_schema(monkeypatch, tmp_path):
+    configured_dsn = os.getenv("POSTGRES_TEST_DSN")
+    if not configured_dsn:
+        pytest.skip("Set POSTGRES_TEST_DSN to a disposable PostgreSQL database")
+    store = PostgresStore() if configured_dsn == "compose" else PostgresStore(configured_dsn)
+    covers_dir = tmp_path / "covers"
+    uploads_dir = tmp_path / "uploads"
+    covers_dir.mkdir()
+    uploads_dir.mkdir()
+    monkeypatch.setattr(postgres_backup_service, "get_postgres_store", lambda: store)
+    service = PostgresBackupService(tmp_path / "backups", covers_dir, uploads_dir)
+
+    def run(*statements):
+        with store.transaction() as connection, connection.cursor() as cursor:
+            for statement in statements:
+                cursor.execute(statement)
+
+    def value(query):
+        with store.connection() as connection, connection.cursor() as cursor:
+            cursor.execute(query)
+            return cursor.fetchone()[0]
+
+    try:
+        store.initialize_schema()
+        run(
+            "DROP TABLE progress_updates, journal_entries",
+            "DELETE FROM app_schema_migrations WHERE version >= 7",
+            "INSERT INTO users (id, username, email, password_hash) VALUES ('v6-user', 'v6-user', 'v6@example.test', 'x')",
+            "INSERT INTO books (id, title) VALUES ('v6-book', 'Before the upgrade')",
+        )
+        backup_path, _manifest = service.create_backup(
+            name="before-v7", description="integration test", backup_id="backup-before-v7",
+            timestamp=datetime.now(timezone.utc), reason="test",
+        )
+
+        store.initialize_schema()
+        run(
+            "INSERT INTO books (id, title) VALUES ('later-book', 'After the upgrade')",
+            "INSERT INTO journal_entries (id, user_id, book_id, title) VALUES ('j1', 'v6-user', 'v6-book', 'After')",
+            "INSERT INTO progress_updates (id, user_id, book_id, occurred_at, journal_entry_id) VALUES ('p1', 'v6-user', 'v6-book', now(), 'j1')",
+            # Unknown to the archive and to the restore, so its foreign key makes the restore fail part-way.
+            "CREATE TABLE restore_blocker (user_id TEXT REFERENCES users(id))",
+        )
+
+        with pytest.raises(PostgresBackupError):
+            service.restore_backup(backup_path, backup_id="backup-before-v7")
+        assert value("SELECT count(*) FROM progress_updates") == 1, "a failed restore must roll back its cleanup"
+        assert value("SELECT count(*) FROM books WHERE id='later-book'") == 1
+
+        run("DROP TABLE restore_blocker")
+        service.restore_backup(backup_path, backup_id="backup-before-v7")
+
+        assert value("SELECT count(*) FROM books WHERE id='v6-book'") == 1
+        assert value("SELECT count(*) FROM books WHERE id='later-book'") == 0
+        assert value("SELECT to_regclass('progress_updates')") is None
+        assert value("SELECT max(version) FROM app_schema_migrations") == 6
+
+        store.initialize_schema()  # what the restart after a restore does
+        assert value("SELECT count(*) FROM progress_updates") == 0
+        assert value("SELECT max(version) FROM app_schema_migrations") >= 7
+    finally:
+        store.close()

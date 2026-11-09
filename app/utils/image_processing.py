@@ -214,9 +214,9 @@ def process_image_from_url(
         if not resp.is_redirect:
             break
         resp.close()
-        current_url = ensure_safe_remote_image_url(urljoin(current_url, resp.headers["Location"]))
-        if urlparse(current_url).hostname != urlparse(url).hostname:
-            # Credentials belong to the original host only.
+        previous_url, current_url = current_url, ensure_safe_remote_image_url(urljoin(current_url, resp.headers["Location"]))
+        if requests.Session().should_strip_auth(previous_url, current_url):
+            # The rule requests uses for its own redirects: a change of host, port or scheme drops them for good.
             request_kwargs.pop("auth", None)
             request_kwargs.pop("headers", None)
         resp = requests.get(current_url, **request_kwargs)

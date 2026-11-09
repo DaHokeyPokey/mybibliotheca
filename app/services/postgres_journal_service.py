@@ -73,6 +73,9 @@ class PostgresJournalService:
         title, body_html = _clean_title(title), _clean_body(body_html)
         with self.store.transaction() as connection, connection.cursor() as cursor:
             if book_id is not None:
+                # Queues with removing the book, which locks the row FOR UPDATE. Its own statement,
+                # so the library check that follows gets a fresh snapshot and sees a removal this waited for.
+                cursor.execute("SELECT 1 FROM books WHERE id=%s FOR KEY SHARE", (book_id,))
                 cursor.execute("SELECT 1 FROM user_books WHERE user_id=%s AND book_id=%s", (user_id, book_id))
                 if cursor.fetchone() is None:
                     raise ValueError("Book is not in your library")

@@ -19,6 +19,7 @@ with kuzu_backend():
 
 NOW = datetime(2026, 11, 9, 12, 0, tzinfo=timezone.utc)
 ROW = ("e1", "alice", "b1", "Title", "<p>x</p>", True, NOW, NOW)
+BOOK_LOCK = "SELECT 1 FROM books WHERE id=%s FOR KEY SHARE"
 
 
 class _Db:
@@ -178,8 +179,9 @@ def test_create_for_a_book_outside_the_library_is_rejected():
 def test_create_for_a_book_in_the_library_links_it():
     db = _Db((1,), ROW)
     _service(db).create_entry_sync("alice", "T", book_id="b1")
-    assert db.statements[0] == ("SELECT 1 FROM user_books WHERE user_id=%s AND book_id=%s", ("alice", "b1"))
-    assert "b1" in db.statements[1][1]
+    assert db.statements[0] == (BOOK_LOCK, ("b1",))  # before the library check, so it sees a removal that has committed
+    assert db.statements[1] == ("SELECT 1 FROM user_books WHERE user_id=%s AND book_id=%s", ("alice", "b1"))
+    assert "b1" in db.statements[2][1]
 
 
 def test_another_users_entry_is_invisible():
@@ -257,6 +259,8 @@ def test_every_statement_is_scoped_to_the_user(call, results):
 
     assert db.statements
     for sql, params in db.statements:
+        if sql == BOOK_LOCK:  # takes a lock and returns nothing to the caller
+            continue
         assert "alice" in params
         assert sql.startswith("INSERT") or "user_id=%s" in sql
 

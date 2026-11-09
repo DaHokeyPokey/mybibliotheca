@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from backend_stub import kuzu_backend  # noqa: E402
 
 with kuzu_backend():
+    from app.domain.models import ReadingLog
     from app.infrastructure import postgres_store
     from app.services import postgres_journal_service as journal_module
     from app.services import postgres_progress_service as progress
@@ -100,7 +101,7 @@ def _update_count(world):
 def test_first_update_creates_the_daily_row_and_starts_the_book(world):
     result = world.record(current_page=40, minutes_read=15, comment="good start")
 
-    assert _daily(world) == [(date(2026, 1, 15), 40, 15, "good start")]
+    assert _daily(world) == [(date(2026, 1, 15), 40, 15, None)]
     page, status, start_date, finish_date = _library(world)
     assert (page, status, finish_date) == (40, "reading", None)
     assert start_date is not None
@@ -114,7 +115,7 @@ def test_two_updates_on_one_day_merge_into_one_daily_row(world):
     world.record(current_page=40, comment="first")
     world.record(current_page=70, minutes_read=5, comment="second", occurred_at=WHEN + timedelta(hours=1))
 
-    assert _daily(world) == [(date(2026, 1, 15), 70, 5, "first\n\nsecond")]
+    assert _daily(world) == [(date(2026, 1, 15), 70, 5, None)]
 
 
 def test_reaching_the_last_page_finishes_the_book(world):
@@ -328,6 +329,63 @@ def test_deleting_an_update_restores_the_earlier_finish_date(world):
 
     _page, status, _start, finish_date = _library(world)
     assert (status, finish_date) == ("read", first_finish)
+
+
+def test_deleting_an_update_restores_the_earlier_page_total(world):
+    world.record(current_page=100)
+    latest = world.record(current_page=50, total_pages=75, occurred_at=WHEN + timedelta(hours=1))
+
+    state = world.service.delete_progress_update_sync(latest["update"]["id"], world.user)
+
+    assert (state["current_page"], state["total_pages"]) == (100, 300)
+
+
+def test_a_comment_stays_out_of_the_daily_log_through_edit_and_delete(world):
+    world.service.reading_logs.create_reading_log_sync(
+        ReadingLog(user_id=world.user, book_id=world.book, date=date(2026, 1, 15), pages_read=5, notes="my own note"))
+    update = world.record(current_page=15, comment="first thought")
+    assert _daily(world) == [(date(2026, 1, 15), 20, 0, "my own note")]
+
+    world.service.update_progress_update_sync(update["update"]["id"], world.user, comment="second thought")
+    assert _daily(world) == [(date(2026, 1, 15), 20, 0, "my own note")]
+
+    world.service.delete_progress_update_sync(update["update"]["id"], world.user)
+    assert _daily(world) == [(date(2026, 1, 15), 5, 0, "my own note")]
+
+
+def test_deleting_an_update_with_a_comment_removes_its_daily_row(world):
+    only = world.record(current_page=15, comment="a thought")
+
+    world.service.delete_progress_update_sync(only["update"]["id"], world.user)
+
+    assert _daily(world) == []
+
+
+def test_editing_minutes_does_not_bring_back_a_deleted_daily_log(world):
+    update = world.record(current_page=15, minutes_read=10)
+    assert world.service.reading_logs.delete_reading_log_sync(update["reading_log"]["id"], world.user)
+
+    edited = world.service.update_progress_update_sync(update["update"]["id"], world.user, minutes_read=15)
+
+    assert _daily(world) == []
+    assert edited["minutes_read"] == 15 and edited["reading_log_id"] is None
+
+
+def test_a_journal_entry_that_waits_for_a_removal_finds_the_book_gone(world):
+    other = _add_user(world.store, "other")
+    _run(world.store, "INSERT INTO user_books (user_id, book_id, reading_status) VALUES (%s, %s, 'reading')", (other, world.book))
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with world.store.transaction() as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT 1 FROM books WHERE id=%s FOR UPDATE", (world.book,))
+            cursor.execute("DELETE FROM user_books WHERE user_id=%s AND book_id=%s", (world.user, world.book))
+            creating = pool.submit(world.journal.create_entry_sync, world.user, "Too late", "", world.book)
+            time.sleep(1)  # time for the creation to reach the lock
+            assert not creating.done()
+        with pytest.raises(ValueError):
+            creating.result(timeout=30)
+
+    assert _rows(world.store, "SELECT count(*) FROM journal_entries WHERE user_id=%s", (world.user,)) == [(0,)]
 
 
 def test_a_new_journal_entry_is_linked_and_sanitized(world):

@@ -26,6 +26,12 @@ from psycopg.conninfo import conninfo_to_dict
 from app.infrastructure.postgres_store import get_postgres_store
 
 
+# Tables that some archives predate. They reference tables a restore drops, and PostgreSQL refuses
+# to drop a table a foreign key still points at, so the restore clears them first. A new table
+# with such a foreign key belongs here too; tests/test_postgres_backup_e2e.py fails without it.
+_TABLES_NEWER_THAN_OLD_ARCHIVES = ("progress_updates", "journal_entries")
+
+
 class PostgresBackupError(RuntimeError):
     """Raised when a PostgreSQL backup cannot be safely created/restored."""
 
@@ -176,6 +182,7 @@ class PostgresBackupService:
         """Restore a validated archive atomically at the PostgreSQL transaction level."""
         backup_path = Path(backup_path).resolve()
         pg_restore = self._client("pg_restore")
+        psql = self._client("psql")
         environment, database = self._pg_environment()
         with zipfile.ZipFile(backup_path, "r") as archive:
             try:
@@ -274,13 +281,24 @@ class PostgresBackupService:
                             os.replace(target, old_path)
                         moved_old.append((target, old_path, source))
                         os.replace(source, target)
+                    restore_timeout = int(os.getenv("POSTGRES_RESTORE_TIMEOUT_SECONDS", "7200"))
+                    # pg_restore cannot add SQL to its own transaction, so it writes a script
+                    # and psql runs the cleanup and that script as one transaction.
+                    restore_script = staging / "restore.sql"
+                    written = subprocess.run(
+                        [pg_restore, "--clean", "--if-exists", "--no-owner", "--no-acl", "--file", str(restore_script), str(dump_file)],
+                        env=environment, capture_output=True, text=True, timeout=restore_timeout,
+                    )
+                    if written.returncode != 0:
+                        detail = (written.stderr or written.stdout or "pg_restore failed").strip()[-3000:]
+                        raise PostgresBackupError(f"PostgreSQL restore script could not be written: {detail}")
                     restored = subprocess.run(
-                        [pg_restore, "--clean", "--if-exists", "--single-transaction", "--no-owner", "--no-acl", "--dbname", database, str(dump_file)],
-                        env=environment, capture_output=True, text=True,
-                        timeout=int(os.getenv("POSTGRES_RESTORE_TIMEOUT_SECONDS", "7200")),
+                        [psql, "--no-psqlrc", "--quiet", "--single-transaction", "--set", "ON_ERROR_STOP=1", "--dbname", database,
+                         "--command", f"DROP TABLE IF EXISTS {', '.join(_TABLES_NEWER_THAN_OLD_ARCHIVES)}", "--file", str(restore_script)],
+                        env=environment, capture_output=True, text=True, timeout=restore_timeout,
                     )
                     if restored.returncode != 0:
-                        detail = (restored.stderr or restored.stdout or "pg_restore failed").strip()[-3000:]
+                        detail = (restored.stderr or restored.stdout or "psql failed").strip()[-3000:]
                         raise PostgresBackupError(f"PostgreSQL restore transaction failed: {detail}")
                 except Exception:
                     for target, old_path, _source in reversed(moved_old):

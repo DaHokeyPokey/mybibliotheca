@@ -295,7 +295,8 @@ def test_the_newest_update_counts_pages_since_the_library_position(monkeypatch):
     result = _record(harness.service, current_page=50, minutes_read=15, comment="  good  ")
 
     assert _inserted(db)["pages_delta"] == 40
-    assert (harness.merged[0]["pages_read"], harness.merged[0]["minutes_read"], harness.merged[0]["notes"]) == (40, 15, "good")
+    assert (harness.merged[0]["pages_read"], harness.merged[0]["minutes_read"], harness.merged[0]["notes"]) == (40, 15, None)
+    assert _inserted(db)["comment"] == "good"
     assert _inserted(db)["reading_log_id"] == "log-1"
     assert _saved(db)["current_page"] == 50
     assert result["reading_log"]["id"] == "log-1" and result["update"]["occurred_at"] == WHEN.isoformat()
@@ -373,7 +374,7 @@ def test_the_update_records_what_it_replaced(monkeypatch):
     _record(_harness(monkeypatch, db).service, current_page=50)
 
     extra = _inserted(db)["extra"]
-    assert '"previous_page": 10' in extra and '"previous_status": "on_hold"' in extra
+    assert '"previous_page": 10' in extra and '"previous_status": "on_hold"' in extra and '"previous_total_pages": 300' in extra
     assert finished_on.isoformat() in extra
 
 
@@ -530,7 +531,7 @@ def test_update_list_is_newest_first_and_capped(monkeypatch):
 
 def _delete_db(newest_id="u1", daily=(40, 15, None), extra=None, log_id="log-1", pages=40, minutes=15):
     if extra is None:
-        extra = {"log_date": "2026-01-15", "previous_page": 10, "previous_status": "plan_to_read", "previous_finish_date": None}
+        extra = {"log_date": "2026-01-15", "previous_page": 10, "previous_status": "plan_to_read", "previous_finish_date": None, "previous_total_pages": 300}
     return _Db([
         (_FIND_UPDATE, ("b1",)),
         (_READ_UPDATE, ("b1", pages, minutes, log_id, WHEN, extra)),
@@ -562,9 +563,18 @@ def test_deleting_the_latest_reverses_the_daily_row_and_restores_the_book(monkey
 
     assert db.params("DELETE FROM progress_updates") == ("u1", "alice")
     assert db.params("UPDATE reading_logs") == (10, 5, "log-1", "alice")
-    assert db.params(_RESTORE_BOOK) == (10, "plan_to_read", None, "alice", "b1")
+    assert db.params(_RESTORE_BOOK) == (10, "plan_to_read", None, 300, "alice", "b1")
     assert result["current_page"] == 10
     assert harness.invalidated[0][1] is True
+
+
+def test_deleting_restores_an_empty_library_total(monkeypatch):
+    extra = {"log_date": "2026-01-15", "previous_page": 10, "previous_status": "reading", "previous_finish_date": None, "previous_total_pages": None}
+    db = _delete_db(extra=extra)
+
+    _harness(monkeypatch, db).service.delete_progress_update_sync("u1", "alice")
+
+    assert db.params(_RESTORE_BOOK)[3] is None
 
 
 def test_deleting_the_last_of_a_daily_row_removes_it(monkeypatch):
@@ -594,11 +604,11 @@ def test_deleting_an_update_with_no_daily_row_touches_no_log(monkeypatch):
 
 # --- Edit -----------------------------------------------------------------------------
 
-def _edit_db(log_id="log-1", minutes=15, more=()):
+def _edit_db(log_id="log-1", minutes=15, more=(), pages=40):
     extra = {"log_date": "2026-01-14"}
     return _Db([
         (_FIND_UPDATE, ("b1",)),
-        (_READ_UPDATE, ("b1", 40, minutes, log_id, WHEN, extra)),
+        (_READ_UPDATE, ("b1", pages, minutes, log_id, WHEN, extra)),
         ("UPDATE progress_updates", _update_row()),
         (_READ_DAILY, (40, 15, None)),
         *more,
@@ -636,13 +646,24 @@ def test_changing_minutes_adjusts_the_daily_row(monkeypatch):
 
 
 def test_adding_minutes_with_no_daily_row_creates_one_on_the_original_date(monkeypatch):
-    db = _edit_db(log_id=None, minutes=None)
+    db = _edit_db(log_id=None, minutes=None, pages=0)
     harness = _harness(monkeypatch, db)
 
     harness.service.update_progress_update_sync("u1", "alice", minutes_read=20)
 
     assert (harness.merged[0]["date"], harness.merged[0]["pages_read"], harness.merged[0]["minutes_read"]) == (date(2026, 1, 14), 0, 20)
     assert db.params("UPDATE progress_updates") == (20, "log-1", "u1", "alice")
+
+
+@pytest.mark.parametrize("pages, minutes", [(40, None), (0, 10), (40, 10)], ids=["pages", "minutes", "both"])
+def test_adding_minutes_does_not_bring_back_a_daily_log_the_user_deleted(monkeypatch, pages, minutes):
+    db = _edit_db(log_id=None, minutes=minutes, pages=pages)
+    harness = _harness(monkeypatch, db)
+
+    harness.service.update_progress_update_sync("u1", "alice", minutes_read=25)
+
+    assert harness.merged == []
+    assert db.params("UPDATE progress_updates") == (25, "u1", "alice")
 
 
 def test_clearing_minutes_subtracts_them(monkeypatch):

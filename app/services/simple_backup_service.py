@@ -24,6 +24,11 @@ from flask import current_app
 from app.utils.safe_kuzu_manager import SafeKuzuManager, get_safe_kuzu_manager
 from app.utils.scheduler_lock import holds_scheduler_lock
 
+try:
+    import fcntl
+except ImportError:  # Windows dev server: one process, nothing to share
+    fcntl = None  # type: ignore[assignment]
+
 # Helper function for query result conversion
 def _convert_query_result_to_list(result) -> list:
     """Convert KuzuDB query result to list of dictionaries."""
@@ -307,15 +312,18 @@ class SimpleBackupService:
     
     def _save_backup_index(self) -> None:
         """Save the backup index to disk."""
+        # Replace atomically: other workers re-read this file and must never see half of it.
+        # A temp name of its own, because two workers sharing one could publish it half-written.
+        temp_file = self.backup_index_file.with_name(f"{self.backup_index_file.name}.{uuid.uuid4().hex}.tmp")
         try:
             data = {backup_id: backup.to_dict() for backup_id, backup in self._backup_index.items()}
-            # Replace atomically: other workers re-read this file and must never see half of it.
-            temp_file = self.backup_index_file.with_suffix('.json.tmp')
             with open(temp_file, 'w') as f:
                 json.dump(data, f, indent=2)
             temp_file.replace(self.backup_index_file)
         except Exception as e:
             logger.error(f"Failed to save backup index: {e}")
+            with contextlib.suppress(OSError):
+                temp_file.unlink()
 
     def _active_backend(self) -> str:
         try:
@@ -1144,11 +1152,21 @@ class SimpleBackupService:
         """Pick up backups other workers added or removed since we last looked."""
         self._backup_index = self._load_backup_index()
 
+    @contextlib.contextmanager
+    def _index_lock(self):
+        """Hold other workers out while this one reads, changes and writes the index."""
+        if fcntl is None:
+            yield
+            return
+        with open(self.backup_index_file.with_suffix('.json.lock'), 'a') as lock_file:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+            yield  # closing the file releases the lock
+
     def _record_backup(self, backup_info: SimpleBackupInfo) -> None:
-        # shortcut: two workers saving in the same instant can still drop one entry; add a file lock if seen.
-        self._refresh_backup_index()
-        self._backup_index[backup_info.id] = backup_info
-        self._save_backup_index()
+        with self._index_lock():
+            self._refresh_backup_index()
+            self._backup_index[backup_info.id] = backup_info
+            self._save_backup_index()
 
     def list_backups(self) -> List[SimpleBackupInfo]:
         """Get list of all backups."""
@@ -1163,21 +1181,22 @@ class SimpleBackupService:
     def delete_backup(self, backup_id: str) -> bool:
         """Delete a backup."""
         try:
-            self._refresh_backup_index()
-            if backup_id not in self._backup_index:
-                return False
-            
-            backup_info = self._backup_index[backup_id]
-            backup_path = Path(backup_info.file_path)
-            
-            # Remove file if it exists
-            if backup_path.exists():
-                backup_path.unlink()
-            
-            # Remove from index
-            del self._backup_index[backup_id]
-            self._save_backup_index()
-            
+            with self._index_lock():
+                self._refresh_backup_index()
+                if backup_id not in self._backup_index:
+                    return False
+
+                backup_info = self._backup_index[backup_id]
+                backup_path = Path(backup_info.file_path)
+
+                # Remove file if it exists
+                if backup_path.exists():
+                    backup_path.unlink()
+
+                # Remove from index
+                del self._backup_index[backup_id]
+                self._save_backup_index()
+
             logger.info(f"Deleted simple backup: {backup_info.name}")
             return True
             

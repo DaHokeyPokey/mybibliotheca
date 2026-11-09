@@ -154,7 +154,7 @@ def test_raw_book_view_never_returns_password_hashes(monkeypatch):
 import app.routes.simple_backup_routes as backup_routes  # noqa: E402
 
 
-def _restore_complete(monkeypatch, user):
+def _record_shutdowns(monkeypatch):
     started = []
     # Never let the real shutdown thread run inside pytest.
     monkeypatch.setattr("os._exit", lambda code: None)
@@ -162,33 +162,72 @@ def _restore_complete(monkeypatch, user):
         "threading.Thread",
         lambda target=None, **kw: SimpleNamespace(start=lambda: started.append(target), daemon=False),
     )
+    return started
+
+
+def _restore_complete(monkeypatch, user):
+    started = _record_shutdowns(monkeypatch)
     monkeypatch.setattr(backup_routes, "render_template", lambda *a, **kw: "restore complete")
+    _as_user(monkeypatch, backup_routes, user)
+    with _view_app().test_request_context("/auth/simple-backup/restore-complete"):
+        return backup_routes.restore_complete(), started
+
+
+def _restore_post(monkeypatch, user, restored=True, restart_required=True):
+    started = _record_shutdowns(monkeypatch)
+    service = SimpleNamespace(
+        get_backup=lambda _id: SimpleNamespace(name="nightly"),
+        restore_backup=lambda _id: restored,
+        check_restart_required=lambda: restart_required,
+    )
+    monkeypatch.setattr(backup_routes, "get_simple_backup_service", lambda: service)
+    monkeypatch.setattr(backup_routes, "url_for", lambda endpoint, **kw: f"/{endpoint}")
     _as_user(monkeypatch, backup_routes, user)
     app = _view_app()
     app.add_url_rule("/auth/login", "auth.login", lambda: "login")
-    with app.test_request_context("/auth/simple-backup/restore-complete"):
+    with app.test_request_context("/auth/simple-backup/restore/b1", method="POST", data={"confirm": "yes"}):
         try:
-            return backup_routes.restore_complete(), started
+            return backup_routes.restore_backup("b1"), started
         except Forbidden:
             return "forbidden", started
 
 
-def test_restore_complete_rejects_anonymous(monkeypatch):
-    resp, started = _restore_complete(monkeypatch, ANON)
-    assert getattr(resp, "status_code", None) == 302
+@pytest.mark.parametrize("user", [ANON, LOGGED_IN, ADMIN], ids=["anonymous", "user", "admin"])
+def test_restore_complete_only_shows_status(monkeypatch, user):
+    resp, started = _restore_complete(monkeypatch, user)
+    assert resp == "restore complete"
     assert started == []
 
 
-def test_restore_complete_rejects_non_admin(monkeypatch):
-    resp, started = _restore_complete(monkeypatch, LOGGED_IN)
+def test_a_successful_restore_schedules_the_restart(monkeypatch):
+    resp, started = _restore_post(monkeypatch, ADMIN)
+    assert resp.status_code == 302 and "restore_complete" in resp.headers["Location"]
+    assert len(started) == 1
+
+
+def test_the_restart_survives_a_restore_that_replaces_the_admin(monkeypatch):
+    _resp, started = _restore_post(monkeypatch, ADMIN)
+    page, started_by_page = _restore_complete(monkeypatch, ANON)  # the session's account is gone after the restore
+    assert page == "restore complete"
+    assert len(started) == 1 and started_by_page == []
+
+
+@pytest.mark.parametrize("outcome", [{"restored": False}, {"restart_required": False}], ids=["failed", "no-restart-needed"])
+def test_no_restart_is_scheduled_otherwise(monkeypatch, outcome):
+    _resp, started = _restore_post(monkeypatch, ADMIN, **outcome)
+    assert started == []
+
+
+def test_anonymous_cannot_restore_or_restart(monkeypatch):
+    resp, started = _restore_post(monkeypatch, ANON)
+    assert getattr(resp, "status_code", None) == 302 and "login" in resp.headers["Location"]
+    assert started == []
+
+
+def test_non_admin_cannot_restore_or_restart(monkeypatch):
+    resp, started = _restore_post(monkeypatch, LOGGED_IN)
     assert resp == "forbidden"
     assert started == []
-
-
-def test_restore_complete_still_restarts_for_admin(monkeypatch):
-    resp, started = _restore_complete(monkeypatch, ADMIN)
-    assert resp == "restore complete"
-    assert len(started) == 1
 
 
 # --- Finding 3: deleting a book removed it from every user's library ---------

@@ -131,8 +131,9 @@ class PostgresProgressService:
             raise LookupError("Journal entry not found for this book")
         return _entry(row)
 
-    def _merge_day(self, cursor: Any, user_id: str, book_id: str, day: date, pages: int, minutes: int, notes: str | None) -> dict[str, Any] | None:
-        log = ReadingLog(user_id=user_id, book_id=book_id, date=day, pages_read=pages, minutes_read=minutes, notes=notes)
+    def _merge_day(self, cursor: Any, user_id: str, book_id: str, day: date, pages: int, minutes: int) -> dict[str, Any] | None:
+        # Numbers only: a comment copied into the day's notes could not follow later edits or deletes (D-020).
+        log = ReadingLog(user_id=user_id, book_id=book_id, date=day, pages_read=pages, minutes_read=minutes)
         return self.reading_logs._merge_daily_log(cursor, self.reading_logs._log_payload(log))
 
     @staticmethod
@@ -211,7 +212,7 @@ class PostgresProgressService:
             pages_delta = max(page - (book["current_page"] or 0), 0) if page is not None and not backdated else 0
 
             # The sender's UTC offset decides which day gets the pages.
-            daily = self._merge_day(cursor, user_id, book_id, moment.date(), pages_delta, minutes or 0, note) if pages_delta > 0 or minutes else None
+            daily = self._merge_day(cursor, user_id, book_id, moment.date(), pages_delta, minutes or 0) if pages_delta > 0 or minutes else None
 
             reached_end = percent == 100 or (page is not None and page == total)
             finished = not backdated and (reached_end or (page is not None and total is None and explicit_finish is not None))
@@ -221,7 +222,8 @@ class PostgresProgressService:
                 # A backdated update never moved the book, so deleting it must not move the book either.
                 finish_before = book["finish_date"]
                 extra.update(previous_page=book["current_page"], previous_status=book["reading_status"],
-                             previous_finish_date=finish_before.isoformat() if finish_before else None)
+                             previous_finish_date=finish_before.isoformat() if finish_before else None,
+                             previous_total_pages=book["total_pages"])
             cursor.execute(
                 "INSERT INTO progress_updates (id, user_id, book_id, occurred_at, current_page, position_percent, pages_delta, "
                 "minutes_read, comment, journal_entry_id, reading_log_id, source, finished, extra) "
@@ -303,13 +305,15 @@ class PostgresProgressService:
             if changes.get("journal_entry_id") is not None:
                 self._journal_for_book(cursor, changes["journal_entry_id"], user_id, current["book_id"])
             if "minutes_read" in changes:
-                added = (changes["minutes_read"] or 0) - (current["minutes_read"] or 0)
+                old_minutes = current["minutes_read"] or 0
+                added = (changes["minutes_read"] or 0) - old_minutes
                 if current["reading_log_id"] and added:
                     self._adjust_daily_log(cursor, current["reading_log_id"], user_id, 0, added)
-                elif added > 0:
+                elif added > 0 and not old_minutes and not current["pages_delta"]:
+                    # This update never fed a daily row. One that did and has none left had it deleted by the user.
                     extra = current["extra"]
                     day = date.fromisoformat(extra["log_date"]) if "log_date" in extra else current["occurred_at"].date()
-                    changes["reading_log_id"] = self._merge_day(cursor, user_id, current["book_id"], day, 0, added, None)["id"]
+                    changes["reading_log_id"] = self._merge_day(cursor, user_id, current["book_id"], day, 0, added)["id"]
             # Column names come from _EDITABLE_FIELDS and the line above, never from the caller.
             assignments = ", ".join(f"{name}=%s" for name in changes)
             cursor.execute(
@@ -336,8 +340,8 @@ class PostgresProgressService:
             extra = current["extra"]
             if "previous_page" in extra:
                 cursor.execute(
-                    "UPDATE user_books SET current_page=%s, reading_status=%s, finish_date=%s, updated_at=now() WHERE user_id=%s AND book_id=%s",
-                    (extra["previous_page"], extra["previous_status"], extra["previous_finish_date"], user_id, book_id),
+                    "UPDATE user_books SET current_page=%s, reading_status=%s, finish_date=%s, total_pages=%s, updated_at=now() WHERE user_id=%s AND book_id=%s",
+                    (extra["previous_page"], extra["previous_status"], extra["previous_finish_date"], extra["previous_total_pages"], user_id, book_id),
                 )
             state = self._book_progress(cursor, user_id, book_id)
         self._invalidate(user_id)
