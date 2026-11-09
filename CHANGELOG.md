@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Admin-only "New update available" notice backed by a cached, silent GitHub releases check (disable with `UPDATE_CHECK_ENABLED=false`).
+- PostgreSQL schema version 7 adds the `journal_entries` and `progress_updates` tables; it is applied automatically at startup. Older versions of the app refuse to start on a database that has it, so back up before upgrading if you might need to roll back. Deleting a book also deletes your progress updates for it and keeps your journal entries, unlinked from the book.
+- JSON endpoints for per-book reading progress (`/progress/...`) and journal entries (`/journal/...`), on PostgreSQL only. A progress update also feeds that day's reading log and can finish the book. Journal text is sanitized when saved, using the new `nh3` dependency.
 
 ### Security
 - Settings pages no longer send saved secrets (OpenAI API key, SMTP password, personal Audiobookshelf key, OPDS password) back to the browser. Leaving one of these fields blank keeps the saved value; type a new value to replace it.

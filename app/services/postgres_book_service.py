@@ -540,6 +540,11 @@ class PostgresBookService:
             if cursor.rowcount == 0:
                 return False  # not in this user's library
             cursor.execute("DELETE FROM custom_fields WHERE user_id = %s AND book_id = %s", (user_id, book_id))
+            cursor.execute("DELETE FROM progress_updates WHERE user_id = %s AND book_id = %s", (user_id, book_id))
+            # Journal entries outlive the book (D-012).
+            cursor.execute(
+                "UPDATE journal_entries SET book_id = NULL WHERE user_id = %s AND book_id = %s", (user_id, book_id)
+            )
             cursor.execute("SELECT 1 FROM user_books WHERE book_id = %s LIMIT 1", (book_id,))
             catalog_deleted = False
             if cursor.fetchone() is None:
@@ -567,6 +572,8 @@ class PostgresBookService:
         cursor.execute("DELETE FROM global_metadata_records WHERE book_id = %s", (book_id,))
         cursor.execute("DELETE FROM custom_fields WHERE book_id = %s", (book_id,))
         cursor.execute("DELETE FROM user_books WHERE book_id = %s", (book_id,))
+        cursor.execute("DELETE FROM progress_updates WHERE book_id = %s", (book_id,))
+        cursor.execute("UPDATE journal_entries SET book_id = NULL WHERE book_id = %s", (book_id,))
         cursor.execute("UPDATE reading_logs SET book_id = NULL WHERE book_id = %s", (book_id,))
         cursor.execute("UPDATE reviews SET book_id = NULL WHERE book_id = %s", (book_id,))
         cursor.execute("DELETE FROM books WHERE id = %s", (book_id,))

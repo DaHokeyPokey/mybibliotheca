@@ -610,6 +610,48 @@ _SCHEMA_MIGRATIONS = (
             "CREATE INDEX IF NOT EXISTS legacy_custom_field_definitions_name_ci_idx ON legacy_custom_field_definitions (lower(name))",
         ),
     ),
+    (
+        7,
+        "progress-and-journal",
+        (
+            # journal_entries first: progress_updates references it.
+            """
+            CREATE TABLE IF NOT EXISTS journal_entries (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+                book_id TEXT REFERENCES books(id) ON DELETE RESTRICT,
+                title TEXT NOT NULL,
+                body_html TEXT NOT NULL DEFAULT '',
+                is_private BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                extra JSONB NOT NULL DEFAULT '{}'::jsonb
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS journal_entries_user_book_idx ON journal_entries (user_id, book_id, updated_at DESC)",
+            """
+            CREATE TABLE IF NOT EXISTS progress_updates (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+                book_id TEXT NOT NULL REFERENCES books(id) ON DELETE RESTRICT,
+                occurred_at TIMESTAMPTZ NOT NULL,
+                current_page INTEGER,
+                position_percent NUMERIC(5,2),
+                pages_delta INTEGER NOT NULL DEFAULT 0,
+                minutes_read INTEGER,
+                comment TEXT,
+                journal_entry_id TEXT REFERENCES journal_entries(id) ON DELETE SET NULL,
+                reading_log_id TEXT REFERENCES reading_logs(id) ON DELETE SET NULL,
+                source TEXT NOT NULL DEFAULT 'modal',
+                finished BOOLEAN NOT NULL DEFAULT FALSE,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                extra JSONB NOT NULL DEFAULT '{}'::jsonb
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS progress_updates_user_book_time_idx ON progress_updates (user_id, book_id, occurred_at DESC)",
+        ),
+    ),
 )
 
 

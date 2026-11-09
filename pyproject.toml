@@ -32,4 +32,5 @@ dependencies = [
     "pytest-cov==7.1.0",
     "pystache==0.6.8",
     "mistune==3.4.0",
+    "nh3==0.3.7",
 ]

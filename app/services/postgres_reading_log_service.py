@@ -172,50 +172,55 @@ class PostgresReadingLogService:
             "created_at": log.created_at or now, "updated_at": log.updated_at or now,
         }
 
+    def _merge_daily_log(self, cursor: Any, payload: dict[str, Any]) -> dict[str, Any] | None:
+        """Merge one log into its daily row on the caller's transaction; the caller invalidates caches after commit."""
+        # Serialize same-user/day writes, including bookless logs, so concurrent imports
+        # cannot create duplicate daily rows when merging existing entries.
+        lock_key = f"reading-log:{payload['user_id']}:{payload['book_id'] or 'none'}:{payload['date']}"
+        cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (lock_key,))
+        cursor.execute(
+            "SELECT id,pages_read,minutes_read,notes FROM reading_logs WHERE user_id=%s AND book_id IS NOT DISTINCT FROM %s AND date IS NOT DISTINCT FROM %s "
+            "ORDER BY created_at NULLS FIRST,id LIMIT 1 FOR UPDATE",
+            (payload["user_id"], payload["book_id"], payload["date"]),
+        )
+        existing = cursor.fetchone()
+        if existing:
+            old_notes, new_notes = existing[3] or "", payload["notes"] or ""
+            combined_notes = f"{old_notes}\n\n{new_notes}" if old_notes and new_notes else (new_notes or old_notes or None)
+            log_id = str(existing[0])
+            # A caller-supplied stable ID makes a retried create idempotent.
+            if log_id != payload["id"]:
+                cursor.execute(
+                    "UPDATE reading_logs SET pages_read=%s,minutes_read=%s,notes=%s,updated_at=%s WHERE id=%s",
+                    (int(existing[1] or 0) + payload["pages_read"], int(existing[2] or 0) + payload["minutes_read"],
+                     combined_notes, payload["updated_at"], existing[0]),
+                )
+        else:
+            log_id = payload["id"]
+            cursor.execute(
+                "INSERT INTO reading_logs(id,user_id,book_id,date,pages_read,minutes_read,notes,created_at,updated_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (log_id, payload["user_id"], payload["book_id"], payload["date"], payload["pages_read"],
+                 payload["minutes_read"], payload["notes"], payload["created_at"], payload["updated_at"]),
+            )
+        result = self._row(cursor, log_id, payload["user_id"])
+        if payload["book_id"] and payload["date"]:
+            start_date = datetime(payload["date"].year, payload["date"].month, payload["date"].day, tzinfo=timezone.utc)
+            cursor.execute(
+                "INSERT INTO user_books(user_id,book_id,reading_status,ownership_status,start_date,date_added,created_at,updated_at) "
+                "VALUES (%s,%s,'','owned',%s,now(),now(),now()) "
+                "ON CONFLICT(user_id,book_id) DO UPDATE SET "
+                "start_date=COALESCE(user_books.start_date,EXCLUDED.start_date),updated_at=now()",
+                (payload["user_id"], payload["book_id"], start_date),
+            )
+        return result
+
     def create_reading_log_sync(self, reading_log: ReadingLog) -> dict[str, Any] | None:
         payload = self._log_payload(reading_log)
         committed = False
         try:
             with self.store.transaction() as connection, connection.cursor() as cursor:
-                # Serialize same-user/day writes, including bookless logs, so concurrent imports
-                # cannot create duplicate daily rows when merging existing entries.
-                lock_key = f"reading-log:{payload['user_id']}:{payload['book_id'] or 'none'}:{payload['date']}"
-                cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (lock_key,))
-                cursor.execute(
-                    "SELECT id,pages_read,minutes_read,notes FROM reading_logs WHERE user_id=%s AND book_id IS NOT DISTINCT FROM %s AND date IS NOT DISTINCT FROM %s "
-                    "ORDER BY created_at NULLS FIRST,id LIMIT 1 FOR UPDATE",
-                    (payload["user_id"], payload["book_id"], payload["date"]),
-                )
-                existing = cursor.fetchone()
-                if existing:
-                    old_notes, new_notes = existing[3] or "", payload["notes"] or ""
-                    combined_notes = f"{old_notes}\n\n{new_notes}" if old_notes and new_notes else (new_notes or old_notes or None)
-                    log_id = str(existing[0])
-                    # A caller-supplied stable ID makes a retried create idempotent.
-                    if log_id != payload["id"]:
-                        cursor.execute(
-                            "UPDATE reading_logs SET pages_read=%s,minutes_read=%s,notes=%s,updated_at=%s WHERE id=%s",
-                            (int(existing[1] or 0) + payload["pages_read"], int(existing[2] or 0) + payload["minutes_read"],
-                             combined_notes, payload["updated_at"], existing[0]),
-                        )
-                else:
-                    log_id = payload["id"]
-                    cursor.execute(
-                        "INSERT INTO reading_logs(id,user_id,book_id,date,pages_read,minutes_read,notes,created_at,updated_at) "
-                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                        (log_id, payload["user_id"], payload["book_id"], payload["date"], payload["pages_read"],
-                         payload["minutes_read"], payload["notes"], payload["created_at"], payload["updated_at"]),
-                    )
-                result = self._row(cursor, log_id, payload["user_id"])
-                if payload["book_id"] and payload["date"]:
-                    start_date = datetime(payload["date"].year, payload["date"].month, payload["date"].day, tzinfo=timezone.utc)
-                    cursor.execute(
-                        "INSERT INTO user_books(user_id,book_id,reading_status,ownership_status,start_date,date_added,created_at,updated_at) "
-                        "VALUES (%s,%s,'','owned',%s,now(),now(),now()) "
-                        "ON CONFLICT(user_id,book_id) DO UPDATE SET "
-                        "start_date=COALESCE(user_books.start_date,EXCLUDED.start_date),updated_at=now()",
-                        (payload["user_id"], payload["book_id"], start_date),
-                    )
+                result = self._merge_daily_log(cursor, payload)
             committed = True
             if result:
                 redis_cache.invalidate_tags(self._user_tag(payload["user_id"]), f"postgres:user_books:{payload['user_id']}", "postgres:reading_logs")

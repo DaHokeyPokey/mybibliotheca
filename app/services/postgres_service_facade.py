@@ -18,7 +18,9 @@ from .postgres_catalog_service import PostgresCatalogService
 from .postgres_custom_field_service import PostgresCustomFieldService
 from .postgres_library_service import PostgresLibraryService
 from .postgres_import_mapping_service import PostgresImportMappingService
+from .postgres_journal_service import PostgresJournalService
 from .postgres_location_service import PostgresLocationService
+from .postgres_progress_service import PostgresProgressService
 from .postgres_reading_log_service import PostgresReadingLogService
 from .postgres_series_service import PostgresSeriesService
 from .postgres_user_service import PostgresUserService
@@ -38,6 +40,8 @@ class PostgresServiceFacade:
         self.location_service = PostgresLocationService(self.store)
         self.import_mapping_service = PostgresImportMappingService(self.store)
         self.custom_field_service = PostgresCustomFieldService(self.store)
+        self.journal_service = PostgresJournalService(self.store)
+        self.progress_service = PostgresProgressService(self.store)
 
     def _overlay_to_book(self, row: dict[str, Any]) -> Book:
         return self._overlay_to_books([row])[0]

@@ -9,6 +9,7 @@ from dataclasses import dataclass, field, InitVar
 from dataclasses import fields as dataclass_fields
 from dataclasses import MISSING
 from datetime import datetime, date, timezone
+from decimal import Decimal
 from typing import Optional, List, Dict, Any, cast
 from enum import Enum
 import json
@@ -842,6 +843,39 @@ class ReadingLog:
     pages_read: int = 0
     minutes_read: int = 0
     notes: Optional[str] = None
+    created_at: datetime = field(default_factory=now_utc)
+    updated_at: datetime = field(default_factory=now_utc)
+
+
+@dataclass
+class ProgressUpdate:
+    """One reading-position update for a book (many per day allowed)."""
+    user_id: str
+    book_id: str
+    occurred_at: datetime
+    id: Optional[str] = None
+    current_page: Optional[int] = None  # None when the update is percent-based
+    position_percent: Optional[Decimal] = None  # 0-100, for books without pages
+    pages_delta: int = 0
+    minutes_read: Optional[int] = None
+    comment: Optional[str] = None
+    journal_entry_id: Optional[str] = None
+    reading_log_id: Optional[str] = None  # the daily reading_logs row this fed into
+    source: str = "modal"  # 'modal' | 'quick' | 'import' | 'backfill'
+    finished: bool = False
+    created_at: datetime = field(default_factory=now_utc)
+    updated_at: datetime = field(default_factory=now_utc)
+
+
+@dataclass
+class JournalEntry:
+    """A user's journal entry, optionally about one book."""
+    user_id: str
+    title: str
+    id: Optional[str] = None
+    book_id: Optional[str] = None  # None for general entries, or after the book is deleted
+    body_html: str = ""  # sanitized HTML
+    is_private: bool = True
     created_at: datetime = field(default_factory=now_utc)
     updated_at: datetime = field(default_factory=now_utc)
 
