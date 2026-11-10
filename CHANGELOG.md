@@ -19,18 +19,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The setup confirmation step no longer prints the submitted form, including its CSRF token, to the browser console.
 - The first-run setup wizard closes once any account exists; before, anyone could reach its steps and create a new admin account on a running install.
 - The raw book data view (`/book/<uid>/raw`) is admin-only and never includes password hashes. Before, any user who had a book could see other users' password hashes, emails and personal notes on installs migrated from Kuzu.
-- The post-restore page (`/auth/simple-backup/restore-complete`) now requires an admin. Before, anyone could open it and restart a worker process.
+- The post-restore page (`/auth/simple-backup/restore-complete`) can no longer restart anything; the restart now comes from the admin-only restore action. Before, anyone could open that page and restart a worker process.
 - Deactivating or deleting a user now ends their existing sessions and remember-me logins. Deactivated admins no longer count toward the "last admin" protection, and admins can no longer deactivate their own account.
 - Failed logins are counted in one database update, so parallel guesses can no longer slip past the 5-attempt lock on PostgreSQL. After a lock expires, the count starts again instead of re-locking on the next mistake.
 - After login, the app only redirects to pages on this site; links such as `/login?next=//other.example` now land on the home page.
 - Person website and official links must be `http`/`https`; `javascript:` links are dropped when saved and are no longer shown if they were saved before.
-- Downloading a cover from a URL now checks every redirect against private and local addresses, and stops sending credentials when a redirect leaves the original host.
+- Downloading a cover from a URL now checks every redirect against private and local addresses, and stops sending credentials when a redirect changes the host, port or scheme (an upgrade from http to https on default ports keeps them).
 
 ### Changed
 - Deleting a custom field is refused while other users still have values for it (on PostgreSQL), and the error message says why; before, it erased their values too.
 - The library page on PostgreSQL counts and pages through your own books, not the whole shared catalog.
 - Docker: Gunicorn workers are no longer restarted every ~1000 requests; the restart killed long imports mid-file.
 - Removed the unused `scrypt` and `cryptography` dependencies.
+- PostgreSQL restore now runs in one `psql` transaction, so a backup taken before schema version 7 can be restored after upgrading. Installs outside Docker need the `psql` client.
 - On PostgreSQL, deleting a book removes it only from your own library (with your custom fields for it). The book stays for other users who have it, and leaves the catalog when its last owner removes it. Before, deleting a book removed it from every user's library. You can no longer delete a book that is not in your library.
 
 ### Fixed
