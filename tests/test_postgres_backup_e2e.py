@@ -1,41 +1,47 @@
-"""Opt-in PostgreSQL backup/restore integration test.
+"""Opt-in PostgreSQL backup/restore integration tests.
 
-Set POSTGRES_TEST_DSN to a fresh disposable database. The special value
-"compose" uses the standard POSTGRES_* variables provided by the local
-Compose service. Restore replaces database objects and bundled app files, so
-this test must never target an application database.
+Set POSTGRES_TEST_DSN to a disposable PostgreSQL server, using a role that can
+create databases. The special value "compose" uses the standard POSTGRES_*
+variables provided by the local Compose service. A restore replaces every
+object in its database, so each test creates and drops a database of its own
+and never writes to the configured one.
 """
 
 from __future__ import annotations
 
 import os
+import uuid
 import zipfile
 from datetime import datetime, timezone
 
+import psycopg
 import pytest
+from psycopg import sql
 from psycopg.conninfo import make_conninfo
 
 from app.infrastructure.postgres_store import PostgresStore
 from app.services import postgres_backup_service
 from app.services.postgres_backup_service import PostgresBackupService, PostgresBackupError
 
-_FIXTURE_TABLES = ("users", "books", "user_books", "reading_logs", "book_contributors",
-                   "book_relationship_edges", "custom_fields", "journal_entries", "progress_updates")
-
-
-def _require_fresh(store):
-    """Stop before a test rewrites a database that holds anything."""
-    with store.connection() as connection, connection.cursor() as cursor:
-        for table in _FIXTURE_TABLES:
-            cursor.execute(f"SELECT count(*) FROM {table}")
-            assert cursor.fetchone()[0] == 0, f"POSTGRES_TEST_DSN must be fresh; {table} is not empty"
-
-
-def test_postgres_backup_restore_round_trip_and_rejects_corrupt_archive(monkeypatch, tmp_path):
+@pytest.fixture
+def own_database():
+    """A new database on the configured server, dropped afterwards."""
     configured_dsn = os.getenv("POSTGRES_TEST_DSN")
     if not configured_dsn:
-        pytest.skip("Set POSTGRES_TEST_DSN to a fresh disposable PostgreSQL database")
-    store = PostgresStore() if configured_dsn == "compose" else PostgresStore(configured_dsn)
+        pytest.skip("Set POSTGRES_TEST_DSN to a disposable PostgreSQL server")
+    server_dsn = PostgresStore().dsn if configured_dsn == "compose" else configured_dsn
+    name = f"backup_e2e_{uuid.uuid4().hex}"
+    with psycopg.connect(server_dsn, autocommit=True) as admin:
+        admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
+    try:
+        yield make_conninfo(server_dsn, dbname=name)
+    finally:
+        with psycopg.connect(server_dsn, autocommit=True) as admin:
+            admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
+
+
+def test_postgres_backup_restore_round_trip_and_rejects_corrupt_archive(monkeypatch, tmp_path, own_database):
+    store = PostgresStore(own_database)
     backup_dir = tmp_path / "backups"
     covers_dir = tmp_path / "covers"
     uploads_dir = tmp_path / "uploads"
@@ -50,7 +56,6 @@ def test_postgres_backup_restore_round_trip_and_rejects_corrupt_archive(monkeypa
 
     try:
         store.initialize_schema()
-        _require_fresh(store)
         with store.connection() as connection, connection.cursor() as cursor:
             cursor.execute("CREATE TABLE backup_restore_probe (value text NOT NULL)")
             cursor.execute("INSERT INTO backup_restore_probe VALUES ('before')")
@@ -91,17 +96,11 @@ def test_postgres_backup_restore_round_trip_and_rejects_corrupt_archive(monkeypa
 
 
 @pytest.mark.parametrize("schema", [None, "library"], ids=["default-schema", "schema-from-the-dsn"])
-def test_a_backup_from_before_migration_7_restores_on_the_upgraded_schema(monkeypatch, tmp_path, schema):
-    configured_dsn = os.getenv("POSTGRES_TEST_DSN")
-    if not configured_dsn:
-        pytest.skip("Set POSTGRES_TEST_DSN to a fresh disposable PostgreSQL database")
-    store = PostgresStore() if configured_dsn == "compose" else PostgresStore(configured_dsn)
+def test_a_backup_from_before_migration_7_restores_on_the_upgraded_schema(monkeypatch, tmp_path, own_database, schema):
     if schema:
-        with store.transaction() as connection, connection.cursor() as cursor:
-            cursor.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
-        base_dsn = store.dsn
-        store.close()
-        store = PostgresStore(make_conninfo(base_dsn, options=f"-c search_path={schema},public"))
+        with psycopg.connect(own_database, autocommit=True) as admin:
+            admin.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+    store = PostgresStore(make_conninfo(own_database, options=f"-c search_path={schema},public") if schema else own_database)
     covers_dir = tmp_path / "covers"
     uploads_dir = tmp_path / "uploads"
     covers_dir.mkdir()
@@ -121,7 +120,6 @@ def test_a_backup_from_before_migration_7_restores_on_the_upgraded_schema(monkey
 
     try:
         store.initialize_schema()
-        _require_fresh(store)
         run(
             "DROP TABLE progress_updates, journal_entries",
             "DELETE FROM app_schema_migrations WHERE version >= 7",

@@ -422,6 +422,33 @@ def test_minutes_come_back_after_the_service_removed_an_empty_daily_row(world):
     assert _daily(world) == [(date(2026, 1, 15), 0, 15, None)]
 
 
+def test_a_daily_log_deleted_on_a_shared_day_stays_deleted(world):
+    first = world.record(position_percent=10, minutes_read=10)
+    second = world.record(position_percent=20, minutes_read=5, occurred_at=WHEN + timedelta(hours=1))
+    world.service.update_progress_update_sync(first["update"]["id"], world.user, minutes_read=0)
+    assert _daily(world) == [(date(2026, 1, 15), 0, 5, None)]
+    assert world.service.reading_logs.delete_reading_log_sync(second["reading_log"]["id"], world.user)
+
+    world.service.update_progress_update_sync(first["update"]["id"], world.user, minutes_read=15)
+
+    assert _daily(world) == []
+
+
+def test_a_daily_log_deleted_during_an_edit_stays_deleted(world, monkeypatch):
+    update = world.record(position_percent=10, minutes_read=10)
+    reached, resume = _pause_before(monkeypatch, world.service, "_adjust_daily_log")
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        editing = pool.submit(world.service.update_progress_update_sync, update["update"]["id"], world.user, minutes_read=0)
+        assert reached.wait(20)
+        assert world.service.reading_logs.delete_reading_log_sync(update["reading_log"]["id"], world.user)
+        resume.set()
+        editing.result(timeout=30)
+    world.service.update_progress_update_sync(update["update"]["id"], world.user, minutes_read=15)
+
+    assert _daily(world) == []
+
+
 def test_undo_follows_the_order_updates_moved_the_book_when_times_tie(world, monkeypatch):
     first_to_start = progress.PostgresProgressService(world.store)
     began, second_finished, real_lock = threading.Event(), threading.Event(), first_to_start._lock
@@ -441,6 +468,7 @@ def test_undo_follows_the_order_updates_moved_the_book_when_times_tie(world, mon
         latest = saving.result(timeout=30)
 
     assert world.service.get_book_progress_sync(world.user, world.book)["last_update"]["id"] == latest["update"]["id"]
+    assert latest["update"]["created_at"] == latest["update"]["updated_at"]
     with pytest.raises(progress.ProgressConflictError):
         world.service.delete_progress_update_sync(earlier["update"]["id"], world.user)
 

@@ -234,6 +234,13 @@ class PostgresReadingLogService:
 
     def delete_reading_log_sync(self, log_id: str, user_id: str) -> bool:
         with self.store.transaction() as connection, connection.cursor() as cursor:
+            # This row before its updates, the order undoing an update takes them.
+            cursor.execute("SELECT 1 FROM reading_logs WHERE id=%s AND user_id=%s FOR UPDATE", (log_id, user_id))
+            # Before the foreign key clears the links, so editing those updates later cannot bring the row back.
+            cursor.execute(
+                """UPDATE progress_updates SET extra = extra || '{"daily_log_deleted": true}'::jsonb WHERE reading_log_id=%s AND user_id=%s""",
+                (log_id, user_id),
+            )
             cursor.execute("DELETE FROM reading_logs WHERE id=%s AND user_id=%s", (log_id, user_id))
             deleted = cursor.rowcount == 1
         if deleted:

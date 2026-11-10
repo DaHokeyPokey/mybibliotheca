@@ -3,6 +3,7 @@
 import json
 import socket
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -593,6 +594,31 @@ def test_a_writer_repairs_a_damaged_index_under_the_lock(monkeypatch, tmp_path):
     service._record_backup(_backup_info(tmp_path, "b2"))
 
     assert sorted(json.loads(service.backup_index_file.read_text())) == ["b1", "b2"]
+
+
+def test_index_changes_take_turns_without_flock(monkeypatch, tmp_path):
+    monkeypatch.setattr(backup_module, "fcntl", None)
+    service = _backup_service(monkeypatch, tmp_path)
+    service._record_backup(_backup_info(tmp_path, "old"))
+    saving, resume, real_save = threading.Event(), threading.Event(), service._save_backup_index
+
+    def pause_the_first_save():
+        if not saving.is_set():
+            saving.set()
+            assert resume.wait(10)
+        real_save()
+
+    monkeypatch.setattr(service, "_save_backup_index", pause_the_first_save)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        recording = pool.submit(service._record_backup, _backup_info(tmp_path, "new"))
+        assert saving.wait(10)
+        deleting = pool.submit(service.delete_backup, "old")
+        time.sleep(0.2)
+        resume.set()
+        recording.result(timeout=10)
+        assert deleting.result(timeout=10) is True
+
+    assert [backup.id for backup in service.list_backups()] == ["new"]
 
 
 def _opds_due(monkeypatch, *, holds_lock):

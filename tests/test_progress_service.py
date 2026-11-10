@@ -178,7 +178,7 @@ def _update_row(**overrides):
 
 
 def _db(book=None, newest=None, more=(), **kwargs):
-    return _Db([(_LIBRARY, book or _book()), (_NEWEST_TIME, (newest,)), (_INSERT_UPDATE, _update_row()), *more], **kwargs)
+    return _Db([(_LIBRARY, book or _book()), (_NEWEST_TIME, (newest, WHEN)), (_INSERT_UPDATE, _update_row()), *more], **kwargs)
 
 
 def _harness(monkeypatch, db):
@@ -209,6 +209,19 @@ def _inserted(db):
 def _saved(db):
     names = ("current_page", "total_pages", "reading_status", "start_date", "finish_date", "user_id", "book_id")
     return dict(zip(names, db.params(_SAVE_BOOK)))
+
+
+def test_deleting_a_reading_log_marks_its_updates_after_locking_the_row(monkeypatch):
+    db = _Db()
+    service, _invalidated = _reading_logs(monkeypatch, db)
+
+    service.delete_reading_log_sync("log-1", "alice")
+
+    statements = [sql for sql, _params in db.statements]
+    assert "reading_logs" in statements[0] and statements[0].endswith("FOR UPDATE")
+    assert statements[1].startswith("UPDATE progress_updates") and "daily_log_deleted" in statements[1]
+    assert statements[2].startswith("DELETE FROM reading_logs")
+    assert [params for _sql, params in db.statements] == [("log-1", "alice")] * 3
 
 
 # --- Validation -----------------------------------------------------------------------
@@ -378,11 +391,14 @@ def test_the_update_records_what_it_replaced(monkeypatch):
     assert finished_on.isoformat() in extra
 
 
-def test_the_tie_breaker_is_taken_after_the_lock(monkeypatch):
-    db = _db()
+def test_both_timestamps_are_read_once_after_the_lock(monkeypatch):
+    locked_at = datetime(2026, 1, 15, 12, 30, tzinfo=timezone.utc)
+    db = _Db([(_LIBRARY, _book()), (_NEWEST_TIME, (None, locked_at)), (_INSERT_UPDATE, _update_row())])
+
     _record(_harness(monkeypatch, db).service, current_page=50)
-    insert = next(sql for sql, _params in db.statements if _INSERT_UPDATE in sql)
-    assert "clock_timestamp()" in insert
+
+    assert "clock_timestamp()" in next(sql for sql, _params in db.statements if _NEWEST_TIME in sql)
+    assert db.params(_INSERT_UPDATE)[-2:] == (locked_at, locked_at)
 
 
 def test_a_supplied_total_is_saved_and_used_for_validation(monkeypatch):
@@ -679,26 +695,15 @@ def test_adding_minutes_with_no_daily_row_creates_one_on_the_original_date(monke
     assert db.params("UPDATE progress_updates") == (20, "log-1", "u1", "alice")
 
 
-@pytest.mark.parametrize("pages, minutes", [(40, None), (0, 10), (40, 10)], ids=["pages", "minutes", "both"])
+@pytest.mark.parametrize("pages, minutes", [(40, None), (0, 10), (0, 0)], ids=["pages", "minutes", "none-left"])
 def test_adding_minutes_does_not_bring_back_a_daily_log_the_user_deleted(monkeypatch, pages, minutes):
-    db = _edit_db(log_id=None, minutes=minutes, pages=pages)
+    db = _edit_db(log_id=None, minutes=minutes, pages=pages, extra={"daily_log_deleted": True})
     harness = _harness(monkeypatch, db)
 
     harness.service.update_progress_update_sync("u1", "alice", minutes_read=25)
 
     assert harness.merged == []
-    minutes, extra, *_ids = db.params("UPDATE progress_updates")
-    assert minutes == 25 and '"daily_log_deleted": true' in extra
-
-
-def test_a_daily_log_known_to_be_deleted_stays_deleted_once_minutes_reach_zero(monkeypatch):
-    db = _edit_db(log_id=None, minutes=0, pages=0, extra={"daily_log_deleted": True})
-    harness = _harness(monkeypatch, db)
-
-    harness.service.update_progress_update_sync("u1", "alice", minutes_read=15)
-
-    assert harness.merged == []
-    assert db.params("UPDATE progress_updates") == (15, "u1", "alice")
+    assert db.params("UPDATE progress_updates") == (25, "u1", "alice")
 
 
 def test_clearing_minutes_subtracts_them(monkeypatch):

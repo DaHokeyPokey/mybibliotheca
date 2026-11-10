@@ -26,7 +26,7 @@ from app.utils.scheduler_lock import holds_scheduler_lock
 
 try:
     import fcntl
-except ImportError:  # Windows dev server: one process, nothing to share
+except ImportError:  # Windows: one process, so _index_mutex alone covers its threads
     fcntl = None  # type: ignore[assignment]
 
 # Helper function for query result conversion
@@ -104,6 +104,9 @@ class SimpleBackupService:
         # Ensure backup directory exists
         self.backup_dir.mkdir(parents=True, exist_ok=True)
         
+        # The scheduler thread and request threads share this instance.
+        self._index_mutex = threading.Lock()
+
         # Load existing backup index
         self._backup_index: Dict[str, SimpleBackupInfo] = self._load_backup_index()
 
@@ -1155,13 +1158,14 @@ class SimpleBackupService:
 
     @contextlib.contextmanager
     def _index_lock(self):
-        """Hold other workers out while this one reads, changes and writes the index."""
-        if fcntl is None:
-            yield
-            return
-        with open(self.backup_index_file.with_suffix('.json.lock'), 'a') as lock_file:
-            fcntl.flock(lock_file, fcntl.LOCK_EX)
-            yield  # closing the file releases the lock
+        """Hold other threads and workers out while this one reads, changes and writes the index."""
+        with self._index_mutex:
+            if fcntl is None:
+                yield
+                return
+            with open(self.backup_index_file.with_suffix('.json.lock'), 'a') as lock_file:
+                fcntl.flock(lock_file, fcntl.LOCK_EX)
+                yield  # closing the file releases the lock
 
     def _record_backup(self, backup_info: SimpleBackupInfo) -> None:
         with self._index_lock():
