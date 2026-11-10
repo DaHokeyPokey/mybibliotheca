@@ -66,7 +66,8 @@ def load_user(user_id):
         from .services import _get_postgres_facade, user_service
         service = _get_postgres_facade().user_service if get_active_backend() == 'postgres' else user_service
         user = service.get_user_by_id_sync(user_id)
-        return user
+        # Flask-Login checks is_active only at login; deactivation must also end live sessions.
+        return user if user and getattr(user, 'is_active', True) else None
     except Exception as e:
         print(f"Error loading user {user_id}: {e}")
         return None

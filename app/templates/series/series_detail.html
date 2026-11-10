@@ -373,7 +373,7 @@
       if(!confirm(warn)) return;
       try {
         deleteBtn.disabled = true;
-        const resp = await fetch(`/series/${seriesId}/delete`, {method:'POST'});
+        const resp = await fetch(`/series/${seriesId}/delete`, {method:'POST', headers: window.csrfToken ? {'X-CSRFToken': window.csrfToken} : {}});
         const data = await resp.json();
         if(data.success){
             window.location = data.redirect || '/series/';

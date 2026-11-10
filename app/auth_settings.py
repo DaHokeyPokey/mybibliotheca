@@ -183,10 +183,14 @@ def settings_server_partial(panel: str):
                             flash('User role updated & backup created.', 'success')
             elif action == 'toggle_active':
                 current_app.logger.error(f"[USER_DELETE_DEBUG] toggle_active path entered for {user_id}")
-                target_user.is_active = not getattr(target_user,'is_active',True)  # type: ignore
-                user_service.update_user_sync(target_user)
-                _trigger_backup('user_status_change')
-                flash('User status toggled & backup created.', 'success')
+                # Only admins reach this panel, so blocking self also protects the last active admin.
+                if target_user.id == current_user.id:  # type: ignore
+                    flash('You cannot deactivate your own account.', 'error')
+                else:
+                    target_user.is_active = not getattr(target_user,'is_active',True)  # type: ignore
+                    user_service.update_user_sync(target_user)
+                    _trigger_backup('user_status_change')
+                    flash('User status toggled & backup created.', 'success')
             elif action == 'delete_user':
                 current_app.logger.error(f"[USER_DELETE_DEBUG] delete_user path entered for {user_id}")
                 admin_pwd = request.form.get('admin_password','')
@@ -792,10 +796,8 @@ def settings_server_partial(panel: str):
 
         # Prepare view context (avoid leaking password)
         settings_view = dict(settings)
-        password_value = stored_password if has_password else ''
         settings_view.pop('password', None)
         settings_view['password_present'] = has_password
-        settings_view['password_value'] = password_value
 
         source_options = build_source_options(field_inventory)
         if suggestions is None:

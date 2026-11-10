@@ -257,7 +257,7 @@ def delete_field(field_id):
         if success:
             flash(f'Custom field "{field_def.get("display_name", field_def.get("name"))}" deleted successfully!', 'success')
         else:
-            flash('Failed to delete custom field', 'error')
+            flash('Could not delete this custom field. Other users may still have values saved in it.', 'error')
         
     except Exception as e:
         flash(f'Error deleting custom field: {str(e)}', 'error')

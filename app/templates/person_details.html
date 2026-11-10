@@ -67,8 +67,9 @@
                             <div class="mt-3">
                                 <h6 class="text-muted mb-2">External Links</h6>
                                 <div class="d-flex flex-wrap gap-2">
-                                    {% if person.website %}
-                                        <a href="{{ person.website }}" target="_blank" class="btn btn-sm btn-outline-primary">
+                                    {# Only http(s): older saved values may hold javascript: links. #}
+                                    {% if person.website and (person.website|string|trim|lower).startswith(('http://', 'https://')) %}
+                                        <a href="{{ person.website }}" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline-primary">
                                             <i class="bi bi-globe"></i> Website
                                         </a>
                                     {% endif %}
@@ -95,8 +96,8 @@
                                         {% set links_data = person.official_links | from_json %}
                                         {% if links_data %}
                                             {% for link in links_data %}
-                                                {% if link.url and link.title %}
-                                                    <a href="{{ link.url }}" target="_blank" class="btn btn-sm btn-outline-secondary">
+                                                {% if link.url and link.title and (link.url|string|trim|lower).startswith(('http://', 'https://')) %}
+                                                    <a href="{{ link.url }}" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline-secondary">
                                                         <i class="bi bi-link-45deg"></i> {{ link.title }}
                                                     </a>
                                                 {% endif %}

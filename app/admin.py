@@ -656,6 +656,16 @@ def save_ai_config(config):
             print(f"Error saving AI config: {e}")
         return False
 
+def _submitted_or_saved_ai_key():
+    """Settings pages never echo the saved key, so a blank field keeps it."""
+    return request.form.get('openai_api_key') or (load_ai_config() or {}).get('OPENAI_API_KEY', '')
+
+
+def _submitted_or_saved_smtp_password():
+    """Settings pages never echo the saved password, so a blank field keeps it."""
+    return (request.form.get('smtp_password') or '').strip() or (load_smtp_config() or {}).get('smtp_password', '')
+
+
 def admin_required(f):
     """
     Decorator to require admin privileges for route access
@@ -1305,7 +1315,7 @@ def update_ai_settings():
         
         # Get form data
         config['AI_PROVIDER'] = request.form.get('ai_provider', 'openai')
-        config['OPENAI_API_KEY'] = request.form.get('openai_api_key', '')
+        config['OPENAI_API_KEY'] = _submitted_or_saved_ai_key()
         config['OPENAI_BASE_URL'] = request.form.get('openai_base_url', 'https://api.openai.com/v1')
         config['OPENAI_MODEL'] = request.form.get('openai_model', 'gpt-4o')
         config['OLLAMA_BASE_URL'] = request.form.get('ollama_base_url', 'http://localhost:11434/v1')
@@ -1365,7 +1375,7 @@ def update_smtp_settings():
         except (TypeError, ValueError):
             config['smtp_port'] = 587
         config['smtp_username'] = request.form.get('smtp_username', '').strip()
-        config['smtp_password'] = request.form.get('smtp_password', '').strip()
+        config['smtp_password'] = _submitted_or_saved_smtp_password()
         config['smtp_from_email'] = request.form.get('smtp_from_email', '').strip()
         config['smtp_from_name'] = request.form.get('smtp_from_name', 'MyBibliotheca').strip()
         allowed_security_values = {'starttls', 'ssl', 'none'}
@@ -1413,7 +1423,7 @@ def test_smtp_connection():
     smtp_server = request.form.get('smtp_server', '').strip()
     raw_port = (request.form.get('smtp_port', '') or '').strip()
     smtp_username = request.form.get('smtp_username', '').strip()
-    smtp_password = request.form.get('smtp_password', '').strip()
+    smtp_password = _submitted_or_saved_smtp_password()
     allowed_security_values = {'starttls', 'ssl', 'none'}
     raw_security = (request.form.get('smtp_security', '') or '').strip().lower()
     if raw_security not in allowed_security_values:
@@ -1618,7 +1628,7 @@ def test_ai_connection():
         # Build config from form data
         config = {
             'AI_PROVIDER': request.form.get('ai_provider', 'openai'),
-            'OPENAI_API_KEY': request.form.get('openai_api_key', ''),
+            'OPENAI_API_KEY': _submitted_or_saved_ai_key(),
             'OPENAI_BASE_URL': request.form.get('openai_base_url', 'https://api.openai.com/v1'),
             'OPENAI_MODEL': request.form.get('openai_model', 'gpt-4o'),
             'OLLAMA_BASE_URL': request.form.get('ollama_base_url', 'http://localhost:11434/v1'),

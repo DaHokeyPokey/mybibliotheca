@@ -924,25 +924,25 @@ class LibraryNetworkGraph {
   showTooltip(event, d) {
     const tooltip = d3.select('#tooltip');
     
-    let content = `<strong>${d.name}</strong><br>`;
-    
+    let content = `<strong>${escapeHtml(d.name)}</strong><br>`;
+
     if (d.type === 'book') {
       content += `Type: Book<br>`;
       if (d.data.user_rating) content += `Rating: ${'★'.repeat(d.data.user_rating)}<br>`;
-      if (d.data.page_count) content += `Pages: ${d.data.page_count}<br>`;
-      if (d.data.reading_status) content += `Status: ${d.data.reading_status}<br>`;
+      if (d.data.page_count) content += `Pages: ${escapeHtml(d.data.page_count)}<br>`;
+      if (d.data.reading_status) content += `Status: ${escapeHtml(d.data.reading_status)}<br>`;
     } else if (d.type === 'contributor') {
-      content += `Type: ${d.contribution_type.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}<br>`;
-      content += `Books: ${d.data.book_count}<br>`;
-      if (d.data.person_id) content += `Person ID: ${d.data.person_id}<br>`;
+      content += `Type: ${escapeHtml(d.contribution_type.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase()))}<br>`;
+      content += `Books: ${escapeHtml(d.data.book_count)}<br>`;
+      if (d.data.person_id) content += `Person ID: ${escapeHtml(d.data.person_id)}<br>`;
     } else if (d.type === 'custom_field') {
       content += `Type: Custom Field<br>`;
-      content += `Field: ${d.field_name}<br>`;
-      content += `Value: ${d.field_value}<br>`;
-      content += `Books: ${d.data.book_count}<br>`;
+      content += `Field: ${escapeHtml(d.field_name)}<br>`;
+      content += `Value: ${escapeHtml(d.field_value)}<br>`;
+      content += `Books: ${escapeHtml(d.data.book_count)}<br>`;
     } else {
-      content += `Type: ${d.type}<br>`;
-      content += `Books: ${d.data.book_count}<br>`;
+      content += `Type: ${escapeHtml(d.type)}<br>`;
+      content += `Books: ${escapeHtml(d.data.book_count)}<br>`;
     }
     
     tooltip
@@ -1112,14 +1112,17 @@ function setupFilterControls() {
   const densitySlider = document.getElementById('densitySlider');
   const densityValue = document.getElementById('densityValue');
   
-  densitySlider.addEventListener('input', function() {
-    const value = parseFloat(this.value);
-    densityValue.textContent = value.toFixed(1);
-    
-    if (networkGraph) {
-      networkGraph.updateDensity(value);
-    }
-  });
+  // The density control is not rendered on this page; without the guard the throw skips the resize handler.
+  if (densitySlider && densityValue) {
+    densitySlider.addEventListener('input', function() {
+      const value = parseFloat(this.value);
+      densityValue.textContent = value.toFixed(1);
+
+      if (networkGraph) {
+        networkGraph.updateDensity(value);
+      }
+    });
+  }
 }
 
 function updateNetworkFilters() {

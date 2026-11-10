@@ -4,7 +4,7 @@ from io import BytesIO
 import ipaddress
 import socket
 import time
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 from pathlib import Path
 import uuid
 from typing import Any, Dict, Optional
@@ -16,6 +16,7 @@ from flask import current_app, has_app_context
 
 
 MAX_REMOTE_IMAGE_BYTES = 5 * 1024 * 1024  # 5MB safety ceiling
+MAX_REMOTE_IMAGE_REDIRECTS = 3
 
 logger = logging.getLogger(__name__)
 
@@ -201,12 +202,27 @@ def process_image_from_url(
         pass
     dl_start = time.perf_counter()
     # Shorter timeout to avoid long hangs; retries could be added later
-    request_kwargs: Dict[str, Any] = {"timeout": 6, "stream": True}
+    # Redirects are followed by hand so every hop gets the private-address check.
+    request_kwargs: Dict[str, Any] = {"timeout": 6, "stream": True, "allow_redirects": False}
     if auth is not None:
         request_kwargs["auth"] = auth
     if headers:
         request_kwargs["headers"] = headers
-    resp = requests.get(url, **request_kwargs)
+    current_url = url
+    resp = requests.get(current_url, **request_kwargs)
+    for _hop in range(MAX_REMOTE_IMAGE_REDIRECTS):
+        if not resp.is_redirect:
+            break
+        resp.close()
+        previous_url, current_url = current_url, ensure_safe_remote_image_url(urljoin(current_url, resp.headers["Location"]))
+        if requests.Session().should_strip_auth(previous_url, current_url):
+            # The rule requests uses for its own redirects: a change of host, port or scheme drops them for good.
+            request_kwargs.pop("auth", None)
+            request_kwargs.pop("headers", None)
+        resp = requests.get(current_url, **request_kwargs)
+    if resp.is_redirect:
+        resp.close()
+        raise ValueError("Cover URL redirected too many times")
     resp.raise_for_status()
     content_length = resp.headers.get('Content-Length')
     if content_length:

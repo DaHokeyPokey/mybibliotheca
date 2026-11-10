@@ -453,7 +453,7 @@ def index():
                 continue
                 
             for book in user_books:
-                finish_date = getattr(book, 'finish_date', None)
+                finish_date = _get_value(book, 'finish_date', None)
                 if finish_date:
                     # Handle datetime conversion
                     if isinstance(finish_date, datetime):
@@ -462,10 +462,10 @@ def index():
                     # Books finished this month
                     if finish_date >= month_start_comm:
                         book_data = {
-                            'title': getattr(book, 'title', 'Unknown'),
-                            'author': getattr(book, 'author', 'Unknown'),
-                            'cover_url': getattr(book, 'cover_url', None),
-                            'finish_date': getattr(book, 'finish_date', None),
+                            'title': _get_value(book, 'title', 'Unknown'),
+                            'author': _get_value(book, 'author', 'Unknown'),
+                            'cover_url': _get_value(book, 'cover_url', None),
+                            'finish_date': _get_value(book, 'finish_date', None),
                             'user': user
                         }
                         month_finished_books.append(book_data)
@@ -473,22 +473,22 @@ def index():
                     # Recent finished books (last 30 days)
                     if finish_date >= (today - timedelta(days=30)):
                         recent_book_data = {
-                            'title': getattr(book, 'title', 'Unknown'),
-                            'author': getattr(book, 'author', 'Unknown'),
-                            'cover_url': getattr(book, 'cover_url', None),
-                            'finish_date': getattr(book, 'finish_date', None),
+                            'title': _get_value(book, 'title', 'Unknown'),
+                            'author': _get_value(book, 'author', 'Unknown'),
+                            'cover_url': _get_value(book, 'cover_url', None),
+                            'finish_date': _get_value(book, 'finish_date', None),
                             'user': user
                         }
                         recent_finished_books.append(recent_book_data)
                 
                 # Currently reading books - use reading_status field
                 elif (getattr(user, 'share_current_reading', False) and
-                      getattr(book, 'reading_status', None) in ['reading', 'currently_reading']):
+                      _get_value(book, 'reading_status', None) in ['reading', 'currently_reading']):
                     book_data = {
-                        'title': getattr(book, 'title', 'Unknown'),
-                        'author': getattr(book, 'author', 'Unknown'),
-                        'cover_url': getattr(book, 'cover_url', None),
-                        'start_date': getattr(book, 'start_date', None),
+                        'title': _get_value(book, 'title', 'Unknown'),
+                        'author': _get_value(book, 'author', 'Unknown'),
+                        'cover_url': _get_value(book, 'cover_url', None),
+                        'start_date': _get_value(book, 'start_date', None),
                         'user': user
                     }
                     community_currently_reading.append(book_data)
@@ -575,7 +575,7 @@ def community_active_readers():
             currently_reading = 0
             
             for book in user_books:
-                finish_date = getattr(book, 'finish_date', None)
+                finish_date = _get_value(book, 'finish_date', None)
                 if finish_date:
                     # Handle datetime conversion
                     if isinstance(finish_date, datetime):
@@ -584,7 +584,7 @@ def community_active_readers():
                     total_books += 1
                     if finish_date >= month_start:
                         books_this_month += 1
-                elif getattr(book, 'reading_status', None) in ['reading', 'currently_reading']:
+                elif _get_value(book, 'reading_status', None) in ['reading', 'currently_reading']:
                     currently_reading += 1
             
             user_stats.append({
@@ -620,7 +620,7 @@ def community_books_this_month():
                 continue
                 
             for book in user_books:
-                finish_date = getattr(book, 'finish_date', None)
+                finish_date = _get_value(book, 'finish_date', None)
                 if finish_date:
                     # Handle both datetime and date objects
                     if isinstance(finish_date, datetime):
@@ -629,10 +629,10 @@ def community_books_this_month():
                     if finish_date >= month_start:
                         # Create book dict with user info for template
                         book_data = {
-                            'title': getattr(book, 'title', 'Unknown'),
-                            'author': getattr(book, 'author', 'Unknown'),
-                            'cover_url': getattr(book, 'cover_url', None),
-                            'finish_date': getattr(book, 'finish_date', None),
+                            'title': _get_value(book, 'title', 'Unknown'),
+                            'author': _get_value(book, 'author', 'Unknown'),
+                            'cover_url': _get_value(book, 'cover_url', None),
+                            'finish_date': _get_value(book, 'finish_date', None),
                             'user': user
                         }
                         books_this_month.append(book_data)
@@ -665,20 +665,21 @@ def community_currently_reading():
                 
             for book in user_books:
                 # Currently reading: use reading_status field
-                if getattr(book, 'reading_status', None) in ['reading', 'currently_reading']:
+                if _get_value(book, 'reading_status', None) in ['reading', 'currently_reading']:
                     
                     # Create book dict with user info for template
                     book_data = {
-                        'title': getattr(book, 'title', 'Unknown'),
-                        'author': getattr(book, 'author', 'Unknown'),
-                        'cover_url': getattr(book, 'cover_url', None),
-                        'start_date': getattr(book, 'start_date', None),
+                        'title': _get_value(book, 'title', 'Unknown'),
+                        'author': _get_value(book, 'author', 'Unknown'),
+                        'cover_url': _get_value(book, 'cover_url', None),
+                        'start_date': _get_value(book, 'start_date', None),
                         'user': user
                     }
                     currently_reading.append(book_data)
         
         # Sort by start date, most recent first
-        currently_reading.sort(key=lambda b: b.get('start_date', date.min), reverse=True)
+        # str(): start dates may be None, dates or datetimes, which don't compare with each other.
+        currently_reading.sort(key=lambda b: str(b.get('start_date') or ''), reverse=True)
         
         return render_template('community_stats/currently_reading.html', books=currently_reading)
     except Exception as e:

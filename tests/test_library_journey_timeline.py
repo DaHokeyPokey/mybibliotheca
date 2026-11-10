@@ -5,8 +5,11 @@ from unittest.mock import patch
 
 from flask import Flask
 
-from app.routes import stats_routes
-from app.routes.stats_helpers import _get_book_date
+from backend_stub import kuzu_backend, kuzu_backend_for_module  # noqa: F401 - autouse fixture
+
+with kuzu_backend():  # importing route modules probes the active backend
+    from app.routes import stats_routes
+    from app.routes.stats_helpers import _get_book_date
 
 
 def _book(uid, status='read', finish=None, added='2024-05-01', start=None, pub=None):

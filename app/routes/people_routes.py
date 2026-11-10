@@ -11,12 +11,25 @@ import traceback
 import inspect
 import asyncio
 import re
+from urllib.parse import urlparse
 
 from app.domain.models import Person
 from app.services import book_service, get_series_service
 
 # Create people blueprint
 people_bp = Blueprint('people', __name__)
+
+
+def _http_url(value) -> str:
+    """Return the URL only if it is http(s); a javascript: link would run for whoever clicks it."""
+    value = str(value or '').strip()
+    return value if urlparse(value).scheme in ('http', 'https') else ''
+
+
+def _http_links(links) -> list:
+    """Keep only link dicts whose URL is http(s)."""
+    return [dict(link, url=_http_url(link.get('url'))) for link in links or []
+            if isinstance(link, dict) and _http_url(link.get('url'))]
 
 @people_bp.route('/people')
 @login_required
@@ -211,7 +224,7 @@ def add_person():
             birth_year = request.form.get('birth_year')
             death_year = request.form.get('death_year')
             birth_place = request.form.get('birth_place', '').strip()
-            website = request.form.get('website', '').strip()
+            website = _http_url(request.form.get('website'))
             
             if not name:
                 flash('Name is required.', 'error')
@@ -299,7 +312,7 @@ def edit_person(person_id):
             birth_year = request.form.get('birth_year')
             death_year = request.form.get('death_year')
             birth_place = request.form.get('birth_place', '').strip()
-            website = request.form.get('website', '').strip()
+            website = _http_url(request.form.get('website'))
             openlibrary_id = request.form.get('openlibrary_id', '').strip()
             image_url = request.form.get('image_url', '').strip()
             
@@ -376,10 +389,10 @@ def edit_person(person_id):
                 try:
                     # Try to parse as existing JSON first
                     if official_links_str.startswith('[') and official_links_str.endswith(']'):
-                        links_data = json.loads(official_links_str)
+                        links_data = _http_links(json.loads(official_links_str))
                     else:
                         # Split by newlines and create simple link objects
-                        urls = [url.strip() for url in official_links_str.split('\n') if url.strip() and url.strip().startswith('http')]
+                        urls = [_http_url(url) for url in official_links_str.split('\n') if _http_url(url)]
                         links_data = []
                         for url in urls:
                             links_data.append({
@@ -392,7 +405,7 @@ def edit_person(person_id):
                         official_links_json = json.dumps(links_data)
                 except json.JSONDecodeError:
                     # If JSON parsing fails, treat as URL list
-                    urls = [url.strip() for url in official_links_str.split('\n') if url.strip() and url.strip().startswith('http')]
+                    urls = [_http_url(url) for url in official_links_str.split('\n') if _http_url(url)]
                     if urls:
                         links_data = [{'title': 'Official Link', 'url': url, 'type': ''} for url in urls]
                         official_links_json = json.dumps(links_data)
@@ -539,10 +552,10 @@ def parse_comprehensive_openlibrary_data(author_data):
         # Store all links as JSON
         links_data = []
         for link in author_data['links']:
-            if isinstance(link, dict):
+            if isinstance(link, dict) and _http_url(link.get('url')):
                 links_data.append({
                     'title': link.get('title', ''),
-                    'url': link.get('url', ''),
+                    'url': _http_url(link.get('url')),
                     'type': link.get('type', {}).get('key', '') if link.get('type') else ''
                 })
         if links_data:
@@ -550,16 +563,16 @@ def parse_comprehensive_openlibrary_data(author_data):
         
         # Also set the first official website as the main website field
         for link in author_data['links']:
-            if isinstance(link, dict) and link.get('url'):
+            if isinstance(link, dict) and _http_url(link.get('url')):
                 if 'official' in link.get('title', '').lower() or 'website' in link.get('title', '').lower():
-                    updates['website'] = link['url']
+                    updates['website'] = _http_url(link['url'])
                     break
     
     # Wikipedia URL handling
-    if author_data.get('wikipedia_url'):
-        updates['website'] = author_data['wikipedia_url']
-    elif author_data.get('website_url'):
-        updates['website'] = author_data['website_url']
+    if _http_url(author_data.get('wikipedia_url')):
+        updates['website'] = _http_url(author_data['wikipedia_url'])
+    elif _http_url(author_data.get('website_url')):
+        updates['website'] = _http_url(author_data['website_url'])
     
     # Photo/image
     if author_data.get('photo_url'):

@@ -18,7 +18,9 @@ from .postgres_catalog_service import PostgresCatalogService
 from .postgres_custom_field_service import PostgresCustomFieldService
 from .postgres_library_service import PostgresLibraryService
 from .postgres_import_mapping_service import PostgresImportMappingService
+from .postgres_journal_service import PostgresJournalService
 from .postgres_location_service import PostgresLocationService
+from .postgres_progress_service import PostgresProgressService
 from .postgres_reading_log_service import PostgresReadingLogService
 from .postgres_series_service import PostgresSeriesService
 from .postgres_user_service import PostgresUserService
@@ -38,53 +40,61 @@ class PostgresServiceFacade:
         self.location_service = PostgresLocationService(self.store)
         self.import_mapping_service = PostgresImportMappingService(self.store)
         self.custom_field_service = PostgresCustomFieldService(self.store)
+        self.journal_service = PostgresJournalService(self.store)
+        self.progress_service = PostgresProgressService(self.store)
 
     def _overlay_to_book(self, row: dict[str, Any]) -> Book:
-        series_name = row.get("series")
-        custom_metadata = dict(row.get("book_custom_metadata") or {})
-        custom_metadata.update(row.get("custom_metadata") or {})
-        book = Book(
-            id=str(row.get("book_id") or row.get("id") or ""),
-            title=row.get("title") or "", subtitle=row.get("subtitle"),
-            isbn13=row.get("isbn13"), isbn10=row.get("isbn10"),
-            description=row.get("description"), published_date=row.get("published_date"),
-            page_count=row.get("page_count"), language=row.get("language") or "en",
-            cover_url=row.get("cover_url"), custom_metadata=custom_metadata,
-            raw_categories=row.get("raw_categories") or [], media_type=row.get("book_media_type"),
-            series=Series(name=series_name) if series_name else None,
-            series_volume=row.get("series_volume"), series_order=row.get("series_order"),
-            created_at=row.get("date_added") or row.get("created_at") or datetime.now(timezone.utc),
-            updated_at=row.get("updated_at") or datetime.now(timezone.utc),
-        )
-        self.book_service._populate_relationships(book)
-        personal = {
-            "reading_status": row.get("reading_status"),
-            "ownership_status": row.get("ownership_status") or "owned",
-            "date_added": row.get("date_added") or book.created_at,
-            "start_date": row.get("start_date"), "finish_date": row.get("finish_date"),
-            "current_page": row.get("current_page"), "total_pages": row.get("total_pages"),
-            "user_rating": row.get("user_rating"), "review": row.get("user_review"),
-            "personal_notes": row.get("personal_notes"), "location_id": row.get("location_id"),
-            "progress_ms": (row.get("custom_metadata") or {}).get("progress_ms"),
-            "progress_percentage": (row.get("custom_metadata") or {}).get("progress_percentage"),
-        }
+        return self._overlay_to_books([row])[0]
+
+    def _overlay_to_books(self, rows: list[dict[str, Any]]) -> list[Book]:
+        books = []
+        for row in rows:
+            series_name = row.get("series")
+            custom_metadata = dict(row.get("book_custom_metadata") or {})
+            custom_metadata.update(row.get("custom_metadata") or {})
+            books.append(Book(
+                id=str(row.get("book_id") or row.get("id") or ""),
+                title=row.get("title") or "", subtitle=row.get("subtitle"),
+                isbn13=row.get("isbn13"), isbn10=row.get("isbn10"),
+                description=row.get("description"), published_date=row.get("published_date"),
+                page_count=row.get("page_count"), language=row.get("language") or "en",
+                cover_url=row.get("cover_url"), custom_metadata=custom_metadata,
+                raw_categories=row.get("raw_categories") or [], media_type=row.get("book_media_type"),
+                series=Series(name=series_name) if series_name else None,
+                series_volume=row.get("series_volume"), series_order=row.get("series_order"),
+                created_at=row.get("date_added") or row.get("created_at") or datetime.now(timezone.utc),
+                updated_at=row.get("updated_at") or datetime.now(timezone.utc),
+            ))
+        # One query per relation for the whole list, not a set of queries per book.
+        self.book_service._populate_relationships_many(books)
         # Locations are stored as book_locations links (set_book_location);
         # prefer them so the edit form preselects the saved location.
         try:
-            linked = self.location_service.get_book_locations(book.id, None) if book.id else []
+            linked = self.location_service.get_first_location_ids_sync([book.id for book in books if book.id])
         except Exception:
-            linked = []
-        if linked:
-            personal["location_id"] = linked[0].id
-        for name, value in personal.items():
-            setattr(book, name, value)
-        setattr(book, "want_to_read", personal["reading_status"] == "plan_to_read")
-        setattr(book, "library_only", personal["reading_status"] == "library_only")
-        return book
+            linked = {}
+        for row, book in zip(rows, books):
+            personal = {
+                "reading_status": row.get("reading_status"),
+                "ownership_status": row.get("ownership_status") or "owned",
+                "date_added": row.get("date_added") or book.created_at,
+                "start_date": row.get("start_date"), "finish_date": row.get("finish_date"),
+                "current_page": row.get("current_page"), "total_pages": row.get("total_pages"),
+                "user_rating": row.get("user_rating"), "review": row.get("user_review"),
+                "personal_notes": row.get("personal_notes"),
+                "location_id": linked.get(book.id) or row.get("location_id"),
+                "progress_ms": (row.get("custom_metadata") or {}).get("progress_ms"),
+                "progress_percentage": (row.get("custom_metadata") or {}).get("progress_percentage"),
+            }
+            for name, value in personal.items():
+                setattr(book, name, value)
+            setattr(book, "want_to_read", personal["reading_status"] == "plan_to_read")
+            setattr(book, "library_only", personal["reading_status"] == "library_only")
+        return books
 
     def _books_from_overlay(self, user_id: str, *, limit: int = 1000, offset: int = 0) -> list[Book]:
         rows = self.library_service.get_books_with_user_overlay_paginated_sync(user_id, limit, offset)
-        return [self._overlay_to_book(row) for row in rows]
+        return self._overlay_to_books(rows)
 
     def create_book_sync(self, domain_book: Book, user_id: str) -> Book:
         return self.book_service.create_book_sync(domain_book, user_id, reading_status="")
@@ -151,15 +161,19 @@ class PostgresServiceFacade:
         if "custom_metadata" in updates:
             personal["custom_metadata"] = updates["custom_metadata"]
         updated_book = self.book_service.update_book_sync(book_id, book_fields) if book_fields else None
+        # Each write commits on its own; a failed one must not be reported as saved.
+        saved = not book_fields or updated_book is not None
         if personal:
-            self.library_service.update_user_book_sync(user_id, book_id, personal)
+            saved = self.library_service.update_user_book_sync(user_id, book_id, personal) and saved
         if "contributors" in updates:
-            self.book_service.replace_contributors_sync(book_id, updates["contributors"])
+            saved = self.book_service.replace_contributors_sync(book_id, updates["contributors"]) and saved
         if "categories" in updates or "raw_categories" in updates:
             categories = updates.get("categories", updates.get("raw_categories"))
-            self.book_service.replace_categories_sync(book_id, categories)
+            saved = self.book_service.replace_categories_sync(book_id, categories) and saved
         if "publisher" in updates:
-            self.book_service.replace_publisher_sync(book_id, updates["publisher"])
+            saved = self.book_service.replace_publisher_sync(book_id, updates["publisher"]) and saved
+        if not saved:
+            return None
         if updated_book:
             return updated_book
         if personal or "contributors" in updates or "categories" in updates or "raw_categories" in updates or "publisher" in updates:
@@ -170,7 +184,7 @@ class PostgresServiceFacade:
         return await asyncio.to_thread(self.update_book_sync, book_id, user_id, **updates)
 
     def delete_book_sync(self, book_id: str, user_id: str) -> bool:
-        return self.book_service.delete_book_sync(book_id)
+        return self.book_service.delete_book_for_user_sync(book_id, user_id)
 
     async def delete_book(self, book_id: str, user_id: str) -> bool:
         return await asyncio.to_thread(self.delete_book_sync, book_id, user_id)
@@ -234,6 +248,11 @@ class PostgresServiceFacade:
     def get_total_book_count_sync(self) -> int:
         with self.store.connection() as connection, connection.cursor() as cursor:
             cursor.execute("SELECT count(*) FROM books")
+            return int(cursor.fetchone()[0])
+
+    def get_user_book_count_sync(self, user_id: str) -> int:
+        with self.store.connection() as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT count(*) FROM user_books WHERE user_id = %s", (user_id,))
             return int(cursor.fetchone()[0])
 
     def get_total_person_count_sync(self) -> int:
@@ -488,7 +507,7 @@ class PostgresServiceFacade:
     def get_recently_added_want_to_read_books(self, user_id: str, limit: int = 5) -> list[Book]:
         rows = self.library_service.get_books_with_user_overlay_paginated_sync(user_id, min(limit * 4, 1000), 0, "date_added_desc")
         selected = [row for row in rows if row.get("reading_status") in ("plan_to_read", "want_to_read")][:limit]
-        return [self._overlay_to_book(row) for row in selected]
+        return self._overlay_to_books(selected)
 
     def get_recently_read_books_for_user(self, user_id: str, limit: int = 5) -> list[dict[str, Any]]:
         with self.store.connection() as connection, connection.cursor() as cursor:

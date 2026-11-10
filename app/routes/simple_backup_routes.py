@@ -8,7 +8,6 @@ from datetime import datetime
 import os
 from typing import Optional
 
-from app import csrf
 from app.services.simple_backup_service import get_simple_backup_service
 from app.admin import admin_required
 
@@ -139,6 +138,26 @@ def create_backup():
     return redirect(url_for('simple_backup.index'))
 
 
+def _restart_shortly() -> None:
+    """Exit once this response has gone out, so the container restarts on the restored data."""
+    import os
+    import threading
+    import time
+
+    def delayed_shutdown():
+        time.sleep(3)  # Give time for response to be sent
+        # Use logging instead of current_app.logger to avoid context issues
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info("Initiating graceful shutdown for container restart after backup restore")
+        os._exit(0)  # Force exit to trigger container restart
+
+    # Start shutdown in background thread
+    thread = threading.Thread(target=delayed_shutdown)
+    thread.daemon = True
+    thread.start()
+
+
 @simple_backup_bp.route('/restore/<backup_id>', methods=['POST'])
 @login_required
 @admin_required
@@ -167,7 +186,8 @@ def restore_backup(backup_id: str):
             # Check if restart is required
             if backup_service.check_restart_required():
                 flash(f'✅ Successfully restored from backup "{backup_info.name}"! You will be logged out while the application restarts to complete the restore process.', 'success')
-                # Trigger container restart and redirect to a completion page
+                # Trigger container restart here: the restore may have replaced this session's account.
+                _restart_shortly()
                 return redirect(url_for('simple_backup.restore_complete'))
             else:
                 flash(f'✅ Successfully restored from backup "{backup_info.name}"! Your data has been restored.', 'success')
@@ -184,24 +204,7 @@ def restore_backup(backup_id: str):
 
 @simple_backup_bp.route('/restore-complete')
 def restore_complete():
-    """Show restore completion page and trigger logout/restart."""
-    import os
-    import threading
-    import time
-    
-    def delayed_shutdown():
-        time.sleep(3)  # Give time for response to be sent
-        # Use logging instead of current_app.logger to avoid context issues
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info("Initiating graceful shutdown for container restart after backup restore")
-        os._exit(0)  # Force exit to trigger container restart
-    
-    # Start shutdown in background thread
-    thread = threading.Thread(target=delayed_shutdown)
-    thread.daemon = True
-    thread.start()
-    
+    """Show that the restore finished. Open to anyone: it only renders, and the session's account may be gone."""
     return render_template('simple_backup/restore_complete.html')
 
 
@@ -303,7 +306,6 @@ def api_backup_stats():
 @simple_backup_bp.route('/api/settings', methods=['GET', 'POST'])
 @login_required
 @admin_required
-@csrf.exempt  # JSON API endpoint; protecting via auth+admin
 def api_backup_settings():
     """Get or update backup scheduler settings (admin only)."""
     try:

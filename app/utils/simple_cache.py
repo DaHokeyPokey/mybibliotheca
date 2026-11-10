@@ -39,8 +39,6 @@ class TTLCache:
 
 
 _cache = TTLCache()
-_user_versions: Dict[str, int] = {}
-_version_lock = threading.Lock()
 
 
 def cache_get(key: str) -> Optional[Any]:
@@ -49,18 +47,6 @@ def cache_get(key: str) -> Optional[Any]:
 
 def cache_set(key: str, value: Any, ttl_seconds: int = 60) -> None:
     _cache.set(key, value, ttl_seconds)
-
-
-def get_user_library_version(user_id: str) -> int:
-    with _version_lock:
-        return int(_user_versions.get(user_id, 0))
-
-
-def bump_user_library_version(user_id: str) -> int:
-    with _version_lock:
-        current = int(_user_versions.get(user_id, 0)) + 1
-        _user_versions[user_id] = current
-        return current
 
 
 def cached(ttl_seconds: int = 60, key_builder: Optional[Callable] = None):

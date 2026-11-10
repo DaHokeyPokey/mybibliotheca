@@ -7,13 +7,12 @@ from werkzeug.datastructures import MultiDict
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.infrastructure import persistence_state
+from backend_stub import kuzu_backend, kuzu_backend_for_module  # noqa: E402,F401 - autouse fixture
 
-persistence_state.get_persistence_state = lambda: {"backend": "kuzu", "migration_run_id": None}
-
-import app.onboarding_state as ob_state  # noqa: E402
-import app.onboarding_system as ob  # noqa: E402
-from app.utils import log_redaction as lr  # noqa: E402
+with kuzu_backend():  # importing route modules probes the active backend
+    import app.onboarding_state as ob_state
+    import app.onboarding_system as ob
+    from app.utils import log_redaction as lr
 
 PW = "Sup3r-Secret-Pw!987"
 

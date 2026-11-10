@@ -1,5 +1,7 @@
 # SQLite to Redis Migration Guide
 
+> ⚠️ **Outdated:** The Redis-based storage this guide targets was replaced. Version 3.0.1 stores data in PostgreSQL; to bring in an old SQLite database, use the in-app **SQLite Database Migration** page at `/import/migrate-sqlite`.
+
 This guide explains how to migrate your existing SQLite Bibliotheca database to the new Redis-based system.
 
 ## 🔄 Migration Overview

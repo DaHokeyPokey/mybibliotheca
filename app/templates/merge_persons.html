@@ -231,9 +231,9 @@ document.addEventListener('DOMContentLoaded', function() {
             const books = primaryOption.dataset.books;
             
             primaryInfo.innerHTML = `
-                <h6>${name}</h6>
-                ${bio ? `<p class="text-muted mb-1">${bio}</p>` : ''}
-                <p class="mb-0"><strong>${books} books</strong> will be kept and additional books will be added from merged people.</p>
+                <h6>${escapeHtml(name)}</h6>
+                ${bio ? `<p class="text-muted mb-1">${escapeHtml(bio)}</p>` : ''}
+                <p class="mb-0"><strong>${escapeHtml(books)} books</strong> will be kept and additional books will be added from merged people.</p>
             `;
             primaryPreview.classList.remove('d-none');
         } else {
@@ -265,7 +265,7 @@ document.addEventListener('DOMContentLoaded', function() {
             mergePreviewContent.innerHTML = `
                 <p><strong>The following ${selectedPersons.length} person(s) will be deleted:</strong></p>
                 <ul>
-                    ${selectedPersons.map(person => `<li>${person.name} (${person.books})</li>`).join('')}
+                    ${selectedPersons.map(person => `<li>${escapeHtml(person.name)} (${escapeHtml(person.books)})</li>`).join('')}
                 </ul>
                 <p><strong>Total books to be transferred:</strong> ${totalBooks}</p>
                 <p class="text-danger mb-0">

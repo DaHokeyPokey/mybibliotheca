@@ -128,6 +128,18 @@ try:
             return _get_postgres_facade().series_service
         return _get_kuzu_series_service()
 
+    def get_journal_service():
+        """PostgreSQL only (D-007): returns None on Kuzu, and callers answer 404."""
+        if get_active_persistence_backend() == "postgres":
+            return _get_postgres_facade().journal_service
+        return None
+
+    def get_progress_service():
+        """PostgreSQL only (D-007): returns None on Kuzu, and callers answer 404."""
+        if get_active_persistence_backend() == "postgres":
+            return _get_postgres_facade().progress_service
+        return None
+
     def get_location_service():
         """Get location persistence from the active book-service facade.
 
@@ -260,6 +272,8 @@ try:
         'job_service',
         'get_series_service',
         'get_location_service',
+        'get_journal_service',
+        'get_progress_service',
         'get_active_persistence_backend',
         'opds_probe_service',
         'opds_sync_service',

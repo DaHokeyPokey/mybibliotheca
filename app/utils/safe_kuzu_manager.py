@@ -59,9 +59,6 @@ class _CachedKuzuResult:
     def get_column_names(self) -> list[str]:
         return list(self._columns)
 
-    def get_num_tuples(self) -> int:
-        return len(self._rows)
-
     def get_as_df(self):
         try:
             import pandas as pd

@@ -267,27 +267,13 @@ class BookRepairService:
         """Make global metadata changes visible in cached user library views."""
         try:
             from app.infrastructure.persistence_state import get_active_backend
-            if get_active_backend() == "postgres":
-                from app.infrastructure import redis_cache
-                from app.services import _get_book_service
-                facade = _get_book_service()
-                user_ids = facade.get_book_user_ids_sync(book_id)
-                redis_cache.invalidate_tags(*[f"postgres:user_books:{user_id}" for user_id in user_ids], "postgres:books")
-                return
-            from app.utils.simple_cache import bump_user_library_version
-
-            result = safe_execute_kuzu_query(
-                """
-                MATCH (u:User)-[:HAS_PERSONAL_METADATA]->(b:Book {id: $book_id})
-                RETURN DISTINCT u.id
-                """,
-                {"book_id": book_id},
-                operation="repairs_invalidate_book_caches",
-            )
-            for row in _convert_query_result_to_list(result):
-                user_id = _text(_value(row, 0, "user_id"))
-                if user_id:
-                    bump_user_library_version(user_id)
+            if get_active_backend() != "postgres":
+                return  # Kuzu keeps no per-user library cache
+            from app.infrastructure import redis_cache
+            from app.services import _get_book_service
+            facade = _get_book_service()
+            user_ids = facade.get_book_user_ids_sync(book_id)
+            redis_cache.invalidate_tags(*[f"postgres:user_books:{user_id}" for user_id in user_ids], "postgres:books")
         except Exception:
             return
 

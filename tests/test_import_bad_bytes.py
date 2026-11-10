@@ -3,14 +3,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.infrastructure import persistence_state
+import re
 
-persistence_state.get_persistence_state = lambda: {"backend": "kuzu", "migration_run_id": None}
+from backend_stub import kuzu_backend, kuzu_backend_for_module  # noqa: E402,F401 - autouse fixture
 
-import re  # noqa: E402
-
-from app.routes.import_format_helpers import detect_csv_format  # noqa: E402
-from app.utils import csv_io  # noqa: E402
+with kuzu_backend():  # importing route modules probes the active backend
+    from app.routes.import_format_helpers import detect_csv_format
+    from app.utils import csv_io
 
 GOODREADS = (
     "Book Id,Title,Author,My Rating,Exclusive Shelf,Bookshelves,Date Read,Date Added,Binding\n"

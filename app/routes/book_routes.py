@@ -5,6 +5,7 @@ Handles book CRUD operations, library views, and book-specific actions.
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, jsonify, abort, make_response, send_file, after_this_request
 from flask_login import login_required, current_user
+from app.admin import admin_required
 from datetime import datetime, date, timezone
 import uuid
 import traceback
@@ -29,6 +30,7 @@ from app.utils.author_sorting import author_first_sort_key_for_book, author_last
 from app.utils.image_processing import process_image_from_url, process_image_from_filestorage, get_covers_dir
 from app.domain.models import Book as DomainBook, MediaType, ReadingStatus
 from app.utils.user_settings import get_default_book_format, get_library_view_defaults
+from .stats_helpers import _get_value
 from .book_route_helpers import (
     _normalize_personal_datetime,
     _datetimes_equal,
@@ -364,13 +366,6 @@ def _handle_edit_book_post(uid, user_book, form):
                     )
                 except Exception as e:
                     current_app.logger.debug(f"[NEEDS_REVIEW][AUTO_CLEAR_FAIL] uid={uid} err={e}")
-
-            # Invalidate cache so UI updates immediately
-            try:
-                from app.utils.simple_cache import bump_user_library_version
-                bump_user_library_version(str(current_user.id))
-            except Exception:
-                pass  # Don't fail the request if cache bump fails
 
             updated_fields = sorted(changes.keys()) if changes else []
             if publisher_posted:
@@ -825,11 +820,6 @@ def refresh_book_metadata(uid):
                 )
             except Exception:
                 pass
-            try:
-                from app.utils.simple_cache import bump_user_library_version
-                bump_user_library_version(user_id)
-            except Exception:
-                pass
             if refresh_mode == 'full':
                 msg = 'Metadata refreshed (full overwrite).'
             elif refresh_mode == 'select':
@@ -872,12 +862,6 @@ def clear_needs_review(uid):
             custom_updates={'needs_review': None},
             merge=True,
         )
-
-        try:
-            from app.utils.simple_cache import bump_user_library_version
-            bump_user_library_version(user_id)
-        except Exception:
-            pass
 
         flash('Needs Review cleared.', 'success')
         return redirect(url_for('book.edit_book', uid=uid))
@@ -1189,13 +1173,6 @@ def fast_add_save():
         except Exception as e:
             current_app.logger.warning(f"Could not retrieve book ID after creation: {e}")
             book_id = None
-        
-        # Invalidate cache
-        try:
-            from app.utils.simple_cache import bump_user_library_version
-            bump_user_library_version(str(current_user.id))
-        except Exception:
-            pass
         
         return jsonify({
             'success': True,
@@ -1652,12 +1629,6 @@ def delete_book(uid):
     
     if success:
         flash('Book deleted from your library.')
-        # Invalidate cached library payloads so UI updates immediately
-        try:
-            from app.utils.simple_cache import bump_user_library_version
-            bump_user_library_version(str(current_user.id))
-        except Exception:
-            pass
     else:
         flash('Failed to delete book.', 'error')
         
@@ -1747,13 +1718,6 @@ def update_status(uid):
         })
 
     book_service.update_book_sync(uid, str(current_user.id), **update_data)
-    
-    # Invalidate cache so UI updates immediately
-    try:
-        from app.utils.simple_cache import bump_user_library_version
-        bump_user_library_version(str(current_user.id))
-    except Exception:
-        pass  # Don't fail the request if cache bump fails
     
     flash('Book status updated.')
     return redirect(url_for('book.view_book_enhanced', uid=uid))
@@ -1862,10 +1826,23 @@ def public_library():
     return render_template('public_library.html', books=books, filter_status=filter_status)
 
 
+def _without_password_hashes(value):
+    """Migrated User nodes carry password hashes; never return them."""
+    if isinstance(value, dict):
+        return {k: _without_password_hashes(v) for k, v in value.items() if k != 'password_hash'}
+    if isinstance(value, list):
+        return [_without_password_hashes(v) for v in value]
+    return value
+
+
 @book_bp.route('/book/<uid>/raw', methods=['GET'])
 @login_required
+@admin_required
 def view_book_raw(uid: str):
-    """Return the raw graph representation of a book and related personal metadata."""
+    """Return the raw graph representation of a book and related personal metadata.
+
+    Admin-only: incoming edges include other users' nodes and personal data.
+    """
     user_id = str(current_user.id)
 
     # Ensure the requester has access to the book (reuses overlay service for authorization)
@@ -1898,7 +1875,7 @@ def view_book_raw(uid: str):
         'enriched_overlay_snapshot': enriched_snapshot
     }
 
-    return jsonify(response)
+    return jsonify(_without_password_hashes(response))
 
 
 @book_bp.route('/book/<uid>/edit', methods=['GET', 'POST'])
@@ -2184,13 +2161,6 @@ def edit_book(uid):
         _apply_book_location(uid, request.form)
         
         if success:
-            # Invalidate cache so UI updates immediately
-            try:
-                from app.utils.simple_cache import bump_user_library_version
-                bump_user_library_version(str(current_user.id))
-            except Exception:
-                pass  # Don't fail the request if cache bump fails
-
             # If metadata was applied from the search modal and the user saved,
             # automatically clear the Needs Review flag.
             try:
@@ -2755,12 +2725,6 @@ def replace_cover(uid):
                 return jsonify({'success': False, 'error': 'Failed to save the new cover'}), 500
             current_app.logger.info(f"[COVER][REPLACE] STORED uid={uid} cached={new_cached_cover_url}")
 
-            try:
-                from app.utils.simple_cache import bump_user_library_version
-                bump_user_library_version(str(current_user.id))
-            except Exception as cache_err:
-                current_app.logger.debug(f"[COVER][REPLACE][CACHE_BUMP_FAIL] uid={uid} err={cache_err}")
-
             # Clean up old cover file if it exists and is a local file
             if old_cover_url and (old_cover_url.startswith('/covers/') or old_cover_url.startswith('/static/covers/')):
                 try:
@@ -3072,10 +3036,15 @@ def month_review(year, month):
         end_date = datetime(year + 1, 1, 1).date()
     else:
         end_date = datetime(year, month + 1, 1).date()
-    
+
+    def _finish_day(book):
+        # Postgres rows are dicts holding TIMESTAMPTZ values; compare as dates.
+        value = _get_value(book, 'finish_date')
+        return value.date() if isinstance(value, datetime) else value
+
     books = [
         book for book in user_books 
-        if (finish_date := getattr(book, 'finish_date', None)) and start_date <= finish_date < end_date
+        if (finish_date := _finish_day(book)) and start_date <= finish_date < end_date
     ]
     
     if not books:
@@ -3126,18 +3095,6 @@ def download_db():
     try:
         # Get all user books with global visibility
         user_books = book_service.get_all_books_with_user_overlay_sync(str(current_user.id))
-
-        def _as_iso_date(value: Any) -> str:
-            if not value:
-                return ''
-            if hasattr(value, 'isoformat'):
-                try:
-                    return value.isoformat()
-                except Exception:
-                    return ''
-            if isinstance(value, str):
-                return value
-            return ''
 
         def _author_names(book_obj: Any) -> str:
             """Robust author extraction (handles list[str], list[dict], list[objects], or single string)."""
@@ -3493,7 +3450,7 @@ def user_profile(user_id):
         
         # Helper function to safely get date from finish_date (handles both date and datetime objects)
         def get_finish_date_safe(book):
-            finish_date = getattr(book, 'finish_date', None)
+            finish_date = _get_value(book, 'finish_date', None)
             if finish_date is None:
                 return None
             # Convert datetime to date if needed
@@ -3512,7 +3469,7 @@ def user_profile(user_id):
                                finish_date >= current_month])
         
         currently_reading = [book for book in all_user_books 
-                           if getattr(book, 'start_date', None) and not getattr(book, 'finish_date', None)] if user.share_current_reading else []
+                           if _get_value(book, 'start_date') and not _get_value(book, 'finish_date')] if user.share_current_reading else []
         
         recent_finished = sorted([book for book in all_user_books if get_finish_date_safe(book)],
                                 key=lambda x: get_finish_date_safe(x) or date.min, reverse=True)[:10]
@@ -3590,13 +3547,6 @@ def bulk_delete_books():
             current_app.logger.exception(f"Bulk delete failed for {uid}: {exc}")
             failed_ids.append(uid)
 
-    if deleted_count:
-        try:
-            from app.utils.simple_cache import bump_user_library_version
-            bump_user_library_version(user_id)
-        except Exception:
-            pass
-
     message_parts = []
     if deleted_count:
         message_parts.append(f"Deleted {deleted_count} book(s).")
@@ -3648,13 +3598,6 @@ def bulk_update_book_status():
         except Exception as exc:  # pragma: no cover - defensive logging
             current_app.logger.exception(f"Bulk status update failed for {uid}: {exc}")
             failed_ids.append(uid)
-
-    if updated_count:
-        try:
-            from app.utils.simple_cache import bump_user_library_version
-            bump_user_library_version(user_id)
-        except Exception:
-            pass
 
     message_bits = []
     if updated_count:
@@ -3720,13 +3663,6 @@ def bulk_update_book_location():
         except Exception as exc:  # pragma: no cover - defensive logging
             current_app.logger.exception(f"Bulk location update failed for {uid}: {exc}")
             failed_ids.append(uid)
-
-    if updated_count:
-        try:
-            from app.utils.simple_cache import bump_user_library_version
-            bump_user_library_version(user_id)
-        except Exception:
-            pass
 
     message_bits = []
     if updated_count:
@@ -3806,13 +3742,6 @@ def bulk_update_book_categories():
         except Exception as exc:  # pragma: no cover - defensive logging
             current_app.logger.exception(f"Bulk category update failed for {uid}: {exc}")
             failed_ids.append(uid)
-
-    if updated_count:
-        try:
-            from app.utils.simple_cache import bump_user_library_version
-            bump_user_library_version(user_id)
-        except Exception:
-            pass
 
     message_bits = []
     if updated_count:
@@ -4386,13 +4315,6 @@ def add_book_manual():
             try: book_service.update_book_sync(created.uid, str(current_user.id), **updates)
             except Exception: pass
 
-    # Invalidate/bump the user's library cache version so the new book shows immediately
-    try:
-        from app.utils.simple_cache import bump_user_library_version
-        bump_user_library_version(str(current_user.id))
-    except Exception:
-        pass
-
     message = f'Added "{title}"'
     
     # Check if request wants JSON response (AJAX or explicit header)
@@ -4459,13 +4381,6 @@ def resolve_duplicate():
                 # Update the book's quantity
                 success = book_service.update_book_sync(book_id, str(current_user.id), quantity=new_quantity)
                 if success:
-                    # Invalidate cache
-                    try:
-                        from app.utils.simple_cache import bump_user_library_version
-                        bump_user_library_version(str(current_user.id))
-                    except Exception:
-                        pass
-                    
                     return jsonify({
                         'success': True,
                         'message': f'Quantity updated to {new_quantity}',
@@ -4558,13 +4473,6 @@ def resolve_duplicate():
                         import traceback
                         traceback.print_exc()
                         return jsonify({'success': False, 'message': f'Failed to add to library: {str(e)}'}), 500
-                    
-                    # Invalidate cache
-                    try:
-                        from app.utils.simple_cache import bump_user_library_version
-                        bump_user_library_version(str(current_user.id))
-                    except Exception:
-                        pass
                     
                     return jsonify({
                         'success': True,

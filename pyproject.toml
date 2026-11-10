@@ -24,8 +24,6 @@ dependencies = [
     "numpy==2.5.4",
     "gunicorn==26.2.0",
     "psutil==7.2.2",
-    "scrypt==0.9.4",
-    "cryptography==50.0.2",
     "redis==8.1.0",
     "kuzu==0.11.3",
     "psycopg[binary,pool]==3.3.6",
@@ -34,4 +32,5 @@ dependencies = [
     "pytest-cov==7.1.0",
     "pystache==0.6.8",
     "mistune==3.4.0",
+    "nh3==0.3.7",
 ]

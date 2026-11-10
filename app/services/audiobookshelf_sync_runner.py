@@ -19,6 +19,7 @@ from app.services.audiobookshelf_service import get_client_from_settings, Audiob
 from app.services.audiobookshelf_import_service import AudiobookshelfImportService
 from app.services.audiobookshelf_listening_sync import AudiobookshelfListeningSync
 from app.utils.safe_import_manager import safe_create_import_job, safe_update_import_job
+from app.utils.scheduler_lock import holds_scheduler_lock
 import uuid
 
 
@@ -265,6 +266,9 @@ class _AbsSyncRunner:
                 pass
 
     def _maybe_schedule_automatic_sync(self) -> None:
+        # Every worker runs this loop; only the lock holder schedules auto-syncs.
+        if not holds_scheduler_lock('abs', current_app.config.get('DATA_DIR', 'data')):
+            return
         settings = load_abs_settings()
         if not settings.get('auto_sync_enabled'):
             return

@@ -213,7 +213,8 @@
 
 <!-- Category data for JavaScript -->
 <script type="application/json" id="category-data">
-{{ categories_json | safe }}
+{# JSON never needs a raw "<"; < keeps "</script>" in names from closing this tag. #}
+{{ (categories_json or '{}') | replace('<', '\\u003c') | safe }}
 </script>
 
 <style>
@@ -270,9 +271,9 @@ function updateSourcePreview() {
         
         details.innerHTML = `
             <div class="d-flex align-items-center mb-2">
-                <span class="me-2">${category.icon || '🏷️'}</span>
-                <strong>${category.name}</strong>
-                ${category.color ? `<div class="ms-2 color-indicator" style="background-color: ${category.color};"></div>` : ''}
+                <span class="me-2">${escapeHtml(category.icon || '🏷️')}</span>
+                <strong>${escapeHtml(category.name)}</strong>
+                ${category.color ? `<div class="ms-2 color-indicator" style="background-color: ${escapeHtml(category.color)};"></div>` : ''}
             </div>
             <div class="row text-center small">
                 <div class="col-4">
@@ -288,8 +289,8 @@ function updateSourcePreview() {
                     <div class="text-muted">Level</div>
                 </div>
             </div>
-            ${category.description ? `<div class="mt-2 small text-muted">${category.description}</div>` : ''}
-            ${category.aliases && category.aliases.length > 0 ? `<div class="mt-2"><small class="text-muted">Aliases: ${category.aliases.join(', ')}</small></div>` : ''}
+            ${category.description ? `<div class="mt-2 small text-muted">${escapeHtml(category.description)}</div>` : ''}
+            ${category.aliases && category.aliases.length > 0 ? `<div class="mt-2"><small class="text-muted">Aliases: ${escapeHtml(category.aliases.join(', '))}</small></div>` : ''}
         `;
         
         preview.classList.remove('d-none');
@@ -311,9 +312,9 @@ function updateTargetPreview() {
         
         details.innerHTML = `
             <div class="d-flex align-items-center mb-2">
-                <span class="me-2">${category.icon || '🏷️'}</span>
-                <strong>${category.name}</strong>
-                ${category.color ? `<div class="ms-2 color-indicator" style="background-color: ${category.color};"></div>` : ''}
+                <span class="me-2">${escapeHtml(category.icon || '🏷️')}</span>
+                <strong>${escapeHtml(category.name)}</strong>
+                ${category.color ? `<div class="ms-2 color-indicator" style="background-color: ${escapeHtml(category.color)};"></div>` : ''}
             </div>
             <div class="row text-center small">
                 <div class="col-4">
@@ -329,8 +330,8 @@ function updateTargetPreview() {
                     <div class="text-muted">Level</div>
                 </div>
             </div>
-            ${category.description ? `<div class="mt-2 small text-muted">${category.description}</div>` : ''}
-            ${category.aliases && category.aliases.length > 0 ? `<div class="mt-2"><small class="text-muted">Aliases: ${category.aliases.join(', ')}</small></div>` : ''}
+            ${category.description ? `<div class="mt-2 small text-muted">${escapeHtml(category.description)}</div>` : ''}
+            ${category.aliases && category.aliases.length > 0 ? `<div class="mt-2"><small class="text-muted">Aliases: ${escapeHtml(category.aliases.join(', '))}</small></div>` : ''}
         `;
         
         preview.classList.remove('d-none');
@@ -371,14 +372,14 @@ function updateMergePreview() {
         summary.innerHTML = `
             <div class="d-flex align-items-center justify-content-center mb-3">
                 <div class="text-center">
-                    <div><strong>${source.name}</strong></div>
+                    <div><strong>${escapeHtml(source.name)}</strong></div>
                     <small class="text-muted">${source.book_count} books, ${source.children_count} subcategories</small>
                 </div>
                 <div class="mx-4">
                     <i class="bi bi-arrow-right merge-arrow"></i>
                 </div>
                 <div class="text-center">
-                    <div><strong>${target.name}</strong></div>
+                    <div><strong>${escapeHtml(target.name)}</strong></div>
                     <small class="text-muted">${target.book_count} books, ${target.children_count} subcategories</small>
                 </div>
             </div>
@@ -386,26 +387,27 @@ function updateMergePreview() {
         
         // Build removal list
         removalList.innerHTML = `
-            <li><i class="bi bi-x text-danger"></i> "${source.name}" category will be deleted</li>
+            <li><i class="bi bi-x text-danger"></i> "${escapeHtml(source.name)}" category will be deleted</li>
         `;
         
         // Build transfer list
         let transfers = [];
+        const targetName = escapeHtml(target.name);
         if (source.book_count > 0) {
-            transfers.push(`<li><i class="bi bi-book text-primary"></i> ${source.book_count} books moved to "${target.name}"`);
+            transfers.push(`<li><i class="bi bi-book text-primary"></i> ${source.book_count} books moved to "${targetName}"`);
         }
         if (source.children_count > 0) {
-            transfers.push(`<li><i class="bi bi-diagram-3 text-info"></i> ${source.children_count} subcategories moved to "${target.name}"`);
+            transfers.push(`<li><i class="bi bi-diagram-3 text-info"></i> ${source.children_count} subcategories moved to "${targetName}"`);
         }
         
         const mergeAliases = document.getElementById('{{ form.merge_aliases.id }}').checked;
         const mergeDescription = document.getElementById('{{ form.merge_description.id }}').checked;
         
         if (mergeAliases && source.aliases && source.aliases.length > 0) {
-            transfers.push(`<li><i class="bi bi-tags text-secondary"></i> ${source.aliases.length} aliases added to "${target.name}"`);
+            transfers.push(`<li><i class="bi bi-tags text-secondary"></i> ${source.aliases.length} aliases added to "${targetName}"`);
         }
         if (mergeDescription && source.description) {
-            transfers.push(`<li><i class="bi bi-text-paragraph text-secondary"></i> Description appended to "${target.name}"`);
+            transfers.push(`<li><i class="bi bi-text-paragraph text-secondary"></i> Description appended to "${targetName}"`);
         }
         
         if (transfers.length === 0) {

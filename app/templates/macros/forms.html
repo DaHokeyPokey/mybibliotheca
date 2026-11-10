@@ -1,10 +1,11 @@
-{% macro csrf_token() %}
+{# Named csrf_field so the body can call Flask-WTF's global csrf_token() instead of itself. #}
+{% macro csrf_field() %}
 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
 {% endmacro %}
 
 {% macro form_start(action="", method="post", class="", id="", enctype="") %}
 <form action="{{ action }}" method="{{ method }}"{% if class %} class="{{ class }}"{% endif %}{% if id %} id="{{ id }}"{% endif %}{% if enctype %} enctype="{{ enctype }}"{% endif %}>
-{{ csrf_token() }}
+{{ csrf_field() }}
 {% endmacro %}
 
 {% macro form_end() %}

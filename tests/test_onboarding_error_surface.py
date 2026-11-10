@@ -5,14 +5,13 @@ from flask import Flask, session
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.infrastructure import persistence_state
+from backend_stub import kuzu_backend, kuzu_backend_for_module  # noqa: E402,F401 - autouse fixture
 
 # Importing the onboarding blueprint pulls in services that probe the active
 # persistence backend at import time; avoid needing a live PostgreSQL server.
-persistence_state.get_persistence_state = lambda: {"backend": "kuzu", "migration_run_id": None}
-
-import app.onboarding_system as ob  # noqa: E402
-import app.auth_settings as auth_settings  # noqa: E402
+with kuzu_backend():
+    import app.onboarding_system as ob
+    import app.auth_settings as auth_settings
 
 
 def _data():

@@ -168,12 +168,6 @@ class KuzuSeriesService:
         return books
 
     # ---------------------- Contributors Augmentation ----------------------
-    def _contrib_rel_types(self) -> List[str]:
-        return [
-            'AUTHORED','NARRATED','EDITED','TRANSLATED','ILLUSTRATED',
-            'GAVE_FOREWORD','GAVE_INTRODUCTION','GAVE_AFTERWORD','COMPILED','GHOST_WROTE','CONTRIBUTED'
-        ]
-
     async def add_contributors_async(self, books: List[Book]):
         # Build a UNION ALL style query to gather contributors from each known relationship type.
         # We avoid relying on a generic r.type property (not present in schema) and explicitly tag the role.

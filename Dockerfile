@@ -61,9 +61,8 @@ RUN echo "openssl_conf = openssl_init" >> /etc/ssl/openssl.cnf && \
 
 # Install Python dependencies
 COPY requirements.txt .
-# Upgrade pip and install cryptographic dependencies first
+# Upgrade pip first
 RUN pip install --upgrade pip setuptools wheel
-RUN pip install cryptography
 RUN pip install -r requirements.txt
 
 # Copy all source code
@@ -103,4 +102,4 @@ ENV WORKERS=6
 # Preload application to avoid multiple KuzuDB initialization attempts
 ARG ACCESS_LOGS="false"
 # Default: disable access logs to keep container output quiet; errors still go to stderr
-CMD ["/bin/sh", "-c", "if [ \"$ACCESS_LOGS\" = \"true\" ]; then exec gunicorn --worker-class sync --no-sendfile -w \"${WORKERS:-6}\" --threads 1 -b 0.0.0.0:5054 --timeout 300 --graceful-timeout 300 --error-logfile - --access-logfile - --max-requests 1000 --max-requests-jitter 100 run:app; else exec gunicorn --worker-class sync --no-sendfile -w \"${WORKERS:-6}\" --threads 1 -b 0.0.0.0:5054 --timeout 300 --graceful-timeout 300 --error-logfile - --max-requests 1000 --max-requests-jitter 100 run:app; fi"]
+CMD ["/bin/sh", "-c", "if [ \"$ACCESS_LOGS\" = \"true\" ]; then exec gunicorn --worker-class sync --no-sendfile -w \"${WORKERS:-6}\" --threads 1 -b 0.0.0.0:5054 --timeout 300 --graceful-timeout 300 --error-logfile - --access-logfile - run:app; else exec gunicorn --worker-class sync --no-sendfile -w \"${WORKERS:-6}\" --threads 1 -b 0.0.0.0:5054 --timeout 300 --graceful-timeout 300 --error-logfile - run:app; fi"]

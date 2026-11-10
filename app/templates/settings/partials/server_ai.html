@@ -19,7 +19,7 @@
         <div class="row g-3">
           <div class="col-md-6">
             <label class="form-label">API Key</label>
-            <input type="password" class="form-control" id="openai_api_key" name="openai_api_key" value="{{ ai_config.get('OPENAI_API_KEY','') if ai_config else '' }}" placeholder="sk-..." />
+            <input type="password" class="form-control" id="openai_api_key" name="openai_api_key" value="" placeholder="{{ '•••••• (unchanged)' if ai_config and ai_config.get('OPENAI_API_KEY') else 'sk-...' }}" autocomplete="new-password" />
           </div>
           <div class="col-md-6">
             <label class="form-label">Model</label>

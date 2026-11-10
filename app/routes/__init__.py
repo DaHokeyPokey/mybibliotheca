@@ -22,6 +22,8 @@ from .genre_taxonomy_routes import genre_taxonomy_bp
 from .api_routes import api_bp
 from .series_routes import series_bp
 from .repair_routes import repairs_bp
+from .progress_routes import progress_bp
+from .journal_routes import journal_bp
 
 # Create a main blueprint that can be registered with the app
 main_bp = Blueprint('main', __name__)
@@ -208,12 +210,6 @@ def bulk_delete_books():
     
     if deleted_count > 0:
         flash(f'Successfully deleted {deleted_count} book(s) from your library.', 'success')
-        # Invalidate cached library payloads for this user
-        try:
-            from app.utils.simple_cache import bump_user_library_version
-            bump_user_library_version(str(current_user.id))
-        except Exception:
-            pass
     if failed_count > 0:
         flash(f'Failed to delete {failed_count} book(s).', 'error')
     
@@ -374,6 +370,8 @@ def register_blueprints(app):
     app.register_blueprint(genres_bp, url_prefix='/genres')
     app.register_blueprint(genres_bp, url_prefix='/categories', name='categories')
     app.register_blueprint(reading_logs, url_prefix='/reading-logs')
+    app.register_blueprint(progress_bp, url_prefix='/progress')
+    app.register_blueprint(journal_bp, url_prefix='/journal')
     # Keep repair endpoints under /auth while separating them from the large
     # authentication/settings module.
     app.register_blueprint(repairs_bp, url_prefix='/auth')
@@ -390,4 +388,4 @@ def register_blueprints(app):
     # Or add URL rules to the main blueprint for backward compatibility
 
 # For backward compatibility, we can also export the blueprints
-__all__ = ['book_bp', 'people_bp', 'import_bp', 'genres_bp', 'main_bp', 'reading_logs', 'repairs_bp', 'register_blueprints']
+__all__ = ['book_bp', 'people_bp', 'import_bp', 'genres_bp', 'main_bp', 'reading_logs', 'repairs_bp', 'progress_bp', 'journal_bp', 'register_blueprints']

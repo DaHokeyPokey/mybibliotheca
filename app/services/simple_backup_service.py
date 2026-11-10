@@ -22,6 +22,12 @@ import uuid
 
 from flask import current_app
 from app.utils.safe_kuzu_manager import SafeKuzuManager, get_safe_kuzu_manager
+from app.utils.scheduler_lock import holds_scheduler_lock
+
+try:
+    import fcntl
+except ImportError:  # Windows: one process, so _index_mutex alone covers its threads
+    fcntl = None  # type: ignore[assignment]
 
 # Helper function for query result conversion
 def _convert_query_result_to_list(result) -> list:
@@ -98,6 +104,9 @@ class SimpleBackupService:
         # Ensure backup directory exists
         self.backup_dir.mkdir(parents=True, exist_ok=True)
         
+        # The scheduler thread and request threads share this instance.
+        self._index_mutex = threading.Lock()
+
         # Load existing backup index
         self._backup_index: Dict[str, SimpleBackupInfo] = self._load_backup_index()
 
@@ -114,6 +123,29 @@ class SimpleBackupService:
         self._create_lock = threading.Lock()
 
     # -------------------------- Settings & Scheduling -----------------------
+    # Each Gunicorn worker holds its own service, so the files on disk are the shared
+    # truth: re-read them whenever another worker has rewritten them.
+    @staticmethod
+    def _file_version(path: Path) -> Optional[tuple]:
+        try:
+            stat = path.stat()
+        except OSError:
+            return None
+        return (stat.st_mtime_ns, stat.st_size)
+
+    @property
+    def _settings(self) -> Dict[str, Any]:
+        cache = self.__dict__.get('_settings_cache')
+        if cache is None or self._file_version(self.backup_settings_file) != self._settings_version:
+            cache = self._load_or_create_settings()
+            self._settings = cache
+        return cache
+
+    @_settings.setter
+    def _settings(self, value: Dict[str, Any]) -> None:
+        self._settings_cache = value
+        self._settings_version = self._file_version(self.backup_settings_file)
+
     def _load_or_create_settings(self) -> Dict[str, Any]:
         defaults = {
             'enabled': True,
@@ -160,6 +192,7 @@ class SimpleBackupService:
             
             # If verification succeeds, rename temp file to actual file
             temp_file.replace(self.backup_settings_file)
+            self._settings_version = self._file_version(self.backup_settings_file)
             logger.info(f"Backup settings saved and verified successfully: {self._settings}")
             return True
         except Exception as e:
@@ -190,6 +223,9 @@ class SimpleBackupService:
         self._scheduler_thread.start()
 
     def _maybe_run_scheduled_backup(self):
+        # Every worker runs this loop; only the lock holder may back up.
+        if not holds_scheduler_lock('backup', self.data_dir):
+            return
         if not self._settings.get('enabled', True):
             return
         freq = self._settings.get('frequency', 'daily')
@@ -215,8 +251,18 @@ class SimpleBackupService:
 
     # -----------------------------------------------------------------------
     
-    def _load_backup_index(self) -> Dict[str, SimpleBackupInfo]:
-        """Load the backup index from disk."""
+    @staticmethod
+    def _index_from(data: Dict[str, Any]) -> Dict[str, SimpleBackupInfo]:
+        index = {}
+        for backup_id, backup_data in data.items():
+            try:
+                index[backup_id] = SimpleBackupInfo.from_dict(backup_data)
+            except Exception as e:
+                logger.warning(f"Failed to load backup info for {backup_id}: {e}")
+        return index
+
+    def _load_backup_index(self, repair: bool = False) -> Dict[str, SimpleBackupInfo]:
+        """Load the backup index from disk. Only a caller holding the index lock may repair a damaged file."""
         if not self.backup_index_file.exists():
             return {}
         
@@ -247,44 +293,41 @@ class SimpleBackupService:
                         try:
                             data = json.loads(content[:last_valid_pos])
                             logger.info(f"Successfully recovered backup index by truncating at position {last_valid_pos}")
-                            # Save the corrected version
-                            self._backup_index = {}
-                            for backup_id, backup_data in data.items():
-                                try:
-                                    self._backup_index[backup_id] = SimpleBackupInfo.from_dict(backup_data)
-                                except Exception as e:
-                                    logger.warning(f"Failed to load backup info for {backup_id}: {e}")
-                            self._save_backup_index()
-                            return self._backup_index
+                            index = self._index_from(data)
+                            if repair:
+                                # Save the corrected version
+                                self._backup_index = index
+                                self._save_backup_index()
+                            return index
                         except json.JSONDecodeError:
                             pass
                 
                 # If recovery fails, backup the corrupted file and start fresh
-                corrupted_backup = self.backup_index_file.with_suffix('.json.corrupted')
-                self.backup_index_file.rename(corrupted_backup)
-                logger.warning(f"Backup index was corrupted, moved to {corrupted_backup} and starting fresh")
+                if repair:
+                    corrupted_backup = self.backup_index_file.with_suffix('.json.corrupted')
+                    self.backup_index_file.rename(corrupted_backup)
+                    logger.warning(f"Backup index was corrupted, moved to {corrupted_backup} and starting fresh")
                 return {}
             
-            index = {}
-            for backup_id, backup_data in data.items():
-                try:
-                    index[backup_id] = SimpleBackupInfo.from_dict(backup_data)
-                except Exception as e:
-                    logger.warning(f"Failed to load backup info for {backup_id}: {e}")
-            
-            return index
+            return self._index_from(data)
         except Exception as e:
             logger.error(f"Failed to load backup index: {e}")
             return {}
     
     def _save_backup_index(self) -> None:
         """Save the backup index to disk."""
+        # Replace atomically: other workers re-read this file and must never see half of it.
+        # A temp name of its own, because two workers sharing one could publish it half-written.
+        temp_file = self.backup_index_file.with_name(f"{self.backup_index_file.name}.{uuid.uuid4().hex}.tmp")
         try:
             data = {backup_id: backup.to_dict() for backup_id, backup in self._backup_index.items()}
-            with open(self.backup_index_file, 'w') as f:
+            with open(temp_file, 'w') as f:
                 json.dump(data, f, indent=2)
+            temp_file.replace(self.backup_index_file)
         except Exception as e:
             logger.error(f"Failed to save backup index: {e}")
+            with contextlib.suppress(OSError):
+                temp_file.unlink()
 
     def _active_backend(self) -> str:
         try:
@@ -344,8 +387,7 @@ class SimpleBackupService:
                     file_path=str(backup_path), file_size=backup_path.stat().st_size,
                     description=description, metadata=metadata,
                 )
-                self._backup_index[backup_id] = backup_info
-                self._save_backup_index()
+                self._record_backup(backup_info)
                 try:
                     self._apply_retention_policy()
                 except Exception as rp_err:
@@ -486,8 +528,7 @@ class SimpleBackupService:
             )
             
             # Add to index and save
-            self._backup_index[backup_id] = backup_info
-            self._save_backup_index()
+            self._record_backup(backup_info)
             
             logger.info(f"Simple backup created successfully: {name} ({file_size / 1024 / 1024:.2f} MB)")
             # Apply retention pruning
@@ -651,8 +692,7 @@ class SimpleBackupService:
                         description=f"Auto-created before restoring '{backup_info.name}'",
                         metadata=metadata,
                     )
-                    self._backup_index[backup_info_obj.id] = backup_info_obj
-                    self._save_backup_index()
+                    self._record_backup(backup_info_obj)
                 except Exception as e:
                     logger.warning(f"Failed to create pre-restore snapshot: {e}. Proceeding cautiously.")
             
@@ -1112,31 +1152,55 @@ class SimpleBackupService:
                     logger.error(f"Error copying {source.name}: {e}")
                     raise
     
+    def _refresh_backup_index(self) -> None:
+        """Pick up backups other workers added or removed. Call only while holding the index lock."""
+        self._backup_index = self._load_backup_index(repair=True)
+
+    @contextlib.contextmanager
+    def _index_lock(self):
+        """Hold other threads and workers out while this one reads, changes and writes the index."""
+        with self._index_mutex:
+            if fcntl is None:
+                yield
+                return
+            with open(self.backup_index_file.with_suffix('.json.lock'), 'a') as lock_file:
+                fcntl.flock(lock_file, fcntl.LOCK_EX)
+                yield  # closing the file releases the lock
+
+    def _record_backup(self, backup_info: SimpleBackupInfo) -> None:
+        with self._index_lock():
+            self._refresh_backup_index()
+            self._backup_index[backup_info.id] = backup_info
+            self._save_backup_index()
+
     def list_backups(self) -> List[SimpleBackupInfo]:
         """Get list of all backups."""
-        return list(self._backup_index.values())
+        # A snapshot of its own: writers in this worker share self._backup_index.
+        return list(self._load_backup_index().values())
     
     def get_backup(self, backup_id: str) -> Optional[SimpleBackupInfo]:
         """Get backup info by ID."""
-        return self._backup_index.get(backup_id)
+        return self._load_backup_index().get(backup_id)
     
     def delete_backup(self, backup_id: str) -> bool:
         """Delete a backup."""
         try:
-            if backup_id not in self._backup_index:
-                return False
-            
-            backup_info = self._backup_index[backup_id]
-            backup_path = Path(backup_info.file_path)
-            
-            # Remove file if it exists
-            if backup_path.exists():
-                backup_path.unlink()
-            
-            # Remove from index
-            del self._backup_index[backup_id]
-            self._save_backup_index()
-            
+            with self._index_lock():
+                self._refresh_backup_index()
+                if backup_id not in self._backup_index:
+                    return False
+
+                backup_info = self._backup_index[backup_id]
+                backup_path = Path(backup_info.file_path)
+
+                # Remove file if it exists
+                if backup_path.exists():
+                    backup_path.unlink()
+
+                # Remove from index
+                del self._backup_index[backup_id]
+                self._save_backup_index()
+
             logger.info(f"Deleted simple backup: {backup_info.name}")
             return True
             
@@ -1216,7 +1280,7 @@ class SimpleBackupService:
             return
         cutoff = datetime.now() - timedelta(days=retention_days)
         to_delete = []
-        for b in self._backup_index.values():
+        for b in self._load_backup_index().values():
             # Keep pre-restore snapshots for minimum retention as well; allow deletion like others
             if b.created_at < cutoff:
                 # Allow manual protection via metadata flag protected=True

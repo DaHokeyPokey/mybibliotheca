@@ -102,18 +102,83 @@ class PostgresBookService:
         return book
 
     def _populate_relationships(self, book: Book) -> None:
-        if not book.id:
+        self._populate_relationships_many([book])
+
+    def _populate_relationships_many(self, books: list[Book]) -> None:
+        """Load contributors, categories, publisher and series for many books.
+
+        A fixed number of queries however long the list is (one per relation, plus the
+        legacy-edge fallback for books that have no normalized rows yet).
+        """
+        by_id = {book.id: book for book in books if book.id}
+        if not by_id:
             return
+        ids = list(by_id)
+        category_columns = (
+            "c.id, c.name, c.normalized_name, c.parent_id, c.description, c.level, c.color, "
+            "c.icon, c.aliases, c.book_count, c.user_book_count, c.created_at, c.updated_at"
+        )
+        publisher_columns = "p.id, p.name, p.normalized_name, p.founded_year, p.country, p.created_at"
+        series_columns = (
+            "s.id, s.name, s.normalized_name, s.description, s.user_cover, s.cover_url, "
+            "s.custom_cover, s.generated_placeholder, s.created_at"
+        )
+
+        def grouped(cursor: Any, sql: str, book_ids: list[str]) -> dict[str, list[tuple]]:
+            cursor.execute(sql, (book_ids,))
+            result: dict[str, list[tuple]] = {}
+            for row in cursor.fetchall():
+                result.setdefault(str(row[0]), []).append(tuple(row[1:]))
+            return result
+
+        def with_fallback(cursor: Any, primary: str, fallback: str) -> dict[str, list[tuple]]:
+            found = grouped(cursor, primary, ids)
+            missing = [book_id for book_id in ids if book_id not in found]
+            if missing:
+                found.update(grouped(cursor, fallback, missing))
+            return found
+
         with self.store.connection() as connection, connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT p.id, p.name, c.contribution_type, c.order_index "
+            contributors = grouped(
+                cursor,
+                "SELECT c.book_id, p.id, p.name, c.contribution_type, c.order_index "
                 "FROM book_contributors c JOIN people p ON p.id = c.person_id "
-                "WHERE c.book_id = %s ORDER BY c.order_index NULLS LAST, c.id",
-                (book.id,),
+                "WHERE c.book_id = ANY(%s) ORDER BY c.book_id, c.order_index NULLS LAST, c.id",
+                ids,
             )
-            contributor_rows = cursor.fetchall()
+            categories = with_fallback(
+                cursor,
+                f"SELECT bc.book_id, {category_columns} "
+                "FROM book_categories bc JOIN categories c ON c.id = bc.category_id "
+                "WHERE bc.book_id = ANY(%s) ORDER BY bc.book_id, lower(c.name), c.id",
+                f"SELECT e.book_id, {category_columns} "
+                "FROM categories c JOIN (SELECT DISTINCT book_id, CASE WHEN source_label = 'Book' "
+                "THEN target_id ELSE source_id END AS category_id FROM book_relationship_edges "
+                "WHERE book_id = ANY(%s) AND relationship = 'CATEGORIZED_AS') e ON c.id = e.category_id "
+                "ORDER BY e.book_id, lower(c.name), c.id",
+            )
+            publishers = with_fallback(
+                cursor,
+                f"SELECT DISTINCT ON (bp.book_id) bp.book_id, {publisher_columns} "
+                "FROM book_publishers bp JOIN publishers p ON p.id = bp.publisher_id "
+                "WHERE bp.book_id = ANY(%s) ORDER BY bp.book_id, p.id",
+                f"SELECT DISTINCT ON (e.book_id) e.book_id, {publisher_columns} "
+                "FROM book_relationship_edges e JOIN publishers p ON p.id = "
+                "CASE WHEN e.source_label = 'Book' THEN e.target_id ELSE e.source_id END "
+                "WHERE e.book_id = ANY(%s) AND e.relationship = 'PUBLISHED_BY' ORDER BY e.book_id, p.id",
+            )
+            series_rows = with_fallback(
+                cursor,
+                f"SELECT DISTINCT ON (bs.book_id) bs.book_id, {series_columns} FROM book_series bs "
+                "JOIN series s ON s.id = bs.series_id WHERE bs.book_id = ANY(%s) ORDER BY bs.book_id, s.id",
+                f"SELECT DISTINCT ON (e.book_id) e.book_id, {series_columns} FROM book_relationship_edges e "
+                "JOIN series s ON s.id = CASE WHEN e.source_label = 'Book' THEN e.target_id ELSE e.source_id END "
+                "WHERE e.book_id = ANY(%s) AND e.relationship = 'PART_OF_SERIES' ORDER BY e.book_id, s.id",
+            )
+
+        for book_id, book in by_id.items():
             book.contributors = []
-            for person_id, name, contribution_type, order_index in contributor_rows:
+            for person_id, name, contribution_type, order_index in contributors.get(book_id, []):
                 try:
                     role = ContributionType(str(contribution_type or "authored").lower())
                 except ValueError:
@@ -123,69 +188,18 @@ class PostgresBookService:
                     person_id=str(person_id), book_id=book.id,
                     contribution_type=role, order=order_index, person=person,
                 ))
-
-            cursor.execute(
-                "SELECT c.id, c.name, c.normalized_name, c.parent_id, c.description, c.level, c.color, "
-                "c.icon, c.aliases, c.book_count, c.user_book_count, c.created_at, c.updated_at "
-                "FROM book_categories bc JOIN categories c ON c.id = bc.category_id "
-                "WHERE bc.book_id = %s ORDER BY lower(c.name), c.id", (book.id,),
-            )
-            category_rows = cursor.fetchall()
-            if not category_rows:
-                cursor.execute(
-                    "SELECT c.id, c.name, c.normalized_name, c.parent_id, c.description, "
-                    "c.level, c.color, c.icon, c.aliases, c.book_count, c.user_book_count, c.created_at, c.updated_at "
-                    "FROM categories c JOIN (SELECT DISTINCT CASE WHEN source_label = 'Book' "
-                    "THEN target_id ELSE source_id END AS category_id FROM book_relationship_edges "
-                    "WHERE book_id = %s AND relationship = 'CATEGORIZED_AS') e ON c.id = e.category_id "
-                    "ORDER BY lower(c.name), c.id",
-                    (book.id,),
-                )
-                category_rows = cursor.fetchall()
             book.categories = [Category(
                 id=row[0], name=row[1] or "", normalized_name=row[2] or "", parent_id=row[3],
                 description=row[4], level=int(row[5] or 0), color=row[6], icon=row[7],
                 aliases=row[8] or [], book_count=int(row[9] or 0), user_book_count=int(row[10] or 0),
                 created_at=row[11] or datetime.now(timezone.utc), updated_at=row[12] or datetime.now(timezone.utc),
-            ) for row in category_rows]
-
-            cursor.execute(
-                "SELECT p.id, p.name, p.normalized_name, p.founded_year, p.country, p.created_at "
-                "FROM book_publishers bp JOIN publishers p ON p.id = bp.publisher_id "
-                "WHERE bp.book_id = %s ORDER BY p.id LIMIT 1",
-                (book.id,),
-            )
-            publisher = cursor.fetchone()
-            if not publisher:
-                cursor.execute(
-                    "SELECT p.id, p.name, p.normalized_name, p.founded_year, p.country, p.created_at "
-                    "FROM book_relationship_edges e JOIN publishers p ON p.id = "
-                    "CASE WHEN e.source_label = 'Book' THEN e.target_id ELSE e.source_id END "
-                    "WHERE e.book_id = %s AND e.relationship = 'PUBLISHED_BY' ORDER BY p.id LIMIT 1",
-                    (book.id,),
-                )
-                publisher = cursor.fetchone()
+            ) for row in categories.get(book_id, [])]
+            publisher = (publishers.get(book_id) or [None])[0]
             book.publisher = Publisher(
                 id=publisher[0], name=publisher[1] or "", normalized_name=publisher[2] or "",
                 founded_year=publisher[3], country=publisher[4], created_at=publisher[5] or datetime.now(timezone.utc),
             ) if publisher else None
-
-            cursor.execute(
-                "SELECT s.id, s.name, s.normalized_name, s.description, s.user_cover, s.cover_url, "
-                "s.custom_cover, s.generated_placeholder, s.created_at FROM book_series bs "
-                "JOIN series s ON s.id = bs.series_id WHERE bs.book_id = %s ORDER BY s.id LIMIT 1",
-                (book.id,),
-            )
-            series = cursor.fetchone()
-            if not series:
-                cursor.execute(
-                    "SELECT s.id, s.name, s.normalized_name, s.description, s.user_cover, s.cover_url, "
-                    "s.custom_cover, s.generated_placeholder, s.created_at FROM book_relationship_edges e "
-                    "JOIN series s ON s.id = CASE WHEN e.source_label = 'Book' THEN e.target_id ELSE e.source_id END "
-                    "WHERE e.book_id = %s AND e.relationship = 'PART_OF_SERIES' ORDER BY s.id LIMIT 1",
-                    (book.id,),
-                )
-                series = cursor.fetchone()
+            series = (series_rows.get(book_id) or [None])[0]
             if series:
                 book.series = Series(
                     id=series[0], name=series[1] or "", normalized_name=series[2] or "",
@@ -508,27 +522,62 @@ class PostgresBookService:
             return None
 
     def delete_book_sync(self, book_id: str) -> bool:
+        """Delete a book from the catalog and from every user's library."""
         with self.store.transaction() as connection, connection.cursor() as cursor:
-            cursor.execute("SELECT user_id FROM user_books WHERE book_id = %s", (book_id,))
-            user_tags = [f"postgres:user_books:{row[0]}" for row in cursor.fetchall()]
-            cursor.execute("DELETE FROM book_relationship_edges WHERE book_id = %s", (book_id,))
-            cursor.execute("DELETE FROM book_contributors WHERE book_id = %s", (book_id,))
-            cursor.execute("DELETE FROM book_authors WHERE book_id = %s", (book_id,))
-            cursor.execute("DELETE FROM book_publishers WHERE book_id = %s", (book_id,))
-            cursor.execute("DELETE FROM book_categories WHERE book_id = %s", (book_id,))
-            cursor.execute("DELETE FROM book_series WHERE book_id = %s", (book_id,))
-            cursor.execute("DELETE FROM book_locations WHERE book_id = %s", (book_id,))
-            cursor.execute("DELETE FROM book_location_overrides WHERE book_id = %s", (book_id,))
-            cursor.execute("DELETE FROM global_metadata_records WHERE book_id = %s", (book_id,))
-            cursor.execute("DELETE FROM custom_fields WHERE book_id = %s", (book_id,))
-            cursor.execute("DELETE FROM user_books WHERE book_id = %s", (book_id,))
-            cursor.execute("UPDATE reading_logs SET book_id = NULL WHERE book_id = %s", (book_id,))
-            cursor.execute("UPDATE reviews SET book_id = NULL WHERE book_id = %s", (book_id,))
-            cursor.execute("DELETE FROM books WHERE id = %s", (book_id,))
-            deleted = cursor.rowcount > 0
+            deleted, user_tags = self._delete_book_everywhere(cursor, book_id)
         if deleted:
             redis_cache.invalidate_tags("postgres:books", *user_tags)
         return deleted
+
+    def delete_book_for_user_sync(self, book_id: str, user_id: str) -> bool:
+        """Remove a book from one user's library; drop the catalog row once no owner is left."""
+        with self.store.transaction() as connection, connection.cursor() as cursor:
+            # Row lock: two users removing the last two copies must not both leave it behind.
+            cursor.execute("SELECT id FROM books WHERE id = %s FOR UPDATE", (book_id,))
+            if cursor.fetchone() is None:
+                return False
+            cursor.execute("DELETE FROM user_books WHERE user_id = %s AND book_id = %s", (user_id, book_id))
+            if cursor.rowcount == 0:
+                return False  # not in this user's library
+            cursor.execute("DELETE FROM custom_fields WHERE user_id = %s AND book_id = %s", (user_id, book_id))
+            cursor.execute("DELETE FROM progress_updates WHERE user_id = %s AND book_id = %s", (user_id, book_id))
+            # Journal entries outlive the book (D-012).
+            cursor.execute(
+                "UPDATE journal_entries SET book_id = NULL WHERE user_id = %s AND book_id = %s", (user_id, book_id)
+            )
+            cursor.execute("SELECT 1 FROM user_books WHERE book_id = %s LIMIT 1", (book_id,))
+            catalog_deleted = False
+            if cursor.fetchone() is None:
+                catalog_deleted, _ = self._delete_book_everywhere(cursor, book_id)
+        user_tags = (
+            f"postgres:user_books:{user_id}",
+            f"postgres:user_library:{user_id}",
+            f"postgres:user_custom_metadata:{user_id}:{book_id}",
+        )
+        redis_cache.invalidate_tags(*(("postgres:books",) if catalog_deleted else ()), *user_tags)
+        return True
+
+    @staticmethod
+    def _delete_book_everywhere(cursor: Any, book_id: str) -> tuple[bool, list[str]]:
+        cursor.execute("SELECT user_id FROM user_books WHERE book_id = %s", (book_id,))
+        user_tags = [f"postgres:user_books:{row[0]}" for row in cursor.fetchall()]
+        cursor.execute("DELETE FROM book_relationship_edges WHERE book_id = %s", (book_id,))
+        cursor.execute("DELETE FROM book_contributors WHERE book_id = %s", (book_id,))
+        cursor.execute("DELETE FROM book_authors WHERE book_id = %s", (book_id,))
+        cursor.execute("DELETE FROM book_publishers WHERE book_id = %s", (book_id,))
+        cursor.execute("DELETE FROM book_categories WHERE book_id = %s", (book_id,))
+        cursor.execute("DELETE FROM book_series WHERE book_id = %s", (book_id,))
+        cursor.execute("DELETE FROM book_locations WHERE book_id = %s", (book_id,))
+        cursor.execute("DELETE FROM book_location_overrides WHERE book_id = %s", (book_id,))
+        cursor.execute("DELETE FROM global_metadata_records WHERE book_id = %s", (book_id,))
+        cursor.execute("DELETE FROM custom_fields WHERE book_id = %s", (book_id,))
+        cursor.execute("DELETE FROM user_books WHERE book_id = %s", (book_id,))
+        cursor.execute("DELETE FROM progress_updates WHERE book_id = %s", (book_id,))
+        cursor.execute("UPDATE journal_entries SET book_id = NULL WHERE book_id = %s", (book_id,))
+        cursor.execute("UPDATE reading_logs SET book_id = NULL WHERE book_id = %s", (book_id,))
+        cursor.execute("UPDATE reviews SET book_id = NULL WHERE book_id = %s", (book_id,))
+        cursor.execute("DELETE FROM books WHERE id = %s", (book_id,))
+        return cursor.rowcount > 0, user_tags
 
     async def delete_book(self, book_id: str) -> bool:
         return await asyncio.to_thread(self.delete_book_sync, book_id)

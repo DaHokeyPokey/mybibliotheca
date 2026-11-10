@@ -14,6 +14,7 @@ from flask import current_app, has_request_context, url_for
 
 from .opds_sync_service import opds_sync_service
 from app.utils.opds_settings import load_opds_settings, save_opds_settings
+from app.utils.scheduler_lock import holds_scheduler_lock
 from app.utils.safe_import_manager import safe_create_import_job, safe_update_import_job
 
 
@@ -333,6 +334,9 @@ class _OpdsSyncRunner:
             save_opds_settings(settings_update)
 
     def _maybe_schedule_automatic_sync(self) -> None:
+        # Every worker runs this loop; only the lock holder schedules auto-syncs.
+        if not holds_scheduler_lock("opds", current_app.config.get("DATA_DIR", "data")):
+            return
         settings = load_opds_settings()
         if not settings.get("auto_sync_enabled"):
             return
@@ -358,6 +362,8 @@ class _OpdsSyncRunner:
         if not due:
             return
         user_id = str(settings.get("auto_sync_user_id") or "__system__")
+        # Record the run first: the sync outlasts the next 60-second check, which would queue it again.
+        save_opds_settings({"last_auto_sync": now.isoformat()})
         # Reuse the regular enqueue path so job bookkeeping is consistent
         self.enqueue_sync(user_id, origin="auto")
 

@@ -395,7 +395,7 @@ document.getElementById('backupSettingsForm')?.addEventListener('submit', functi
     
     fetch('{{ url_for("simple_backup.api_backup_settings") }}', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': window.csrfToken },
         body: JSON.stringify(payload)
     })
     .then(r => {
