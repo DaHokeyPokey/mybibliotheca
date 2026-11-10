@@ -378,16 +378,29 @@ def test_the_update_records_what_it_replaced(monkeypatch):
     assert finished_on.isoformat() in extra
 
 
+def test_the_tie_breaker_is_taken_after_the_lock(monkeypatch):
+    db = _db()
+    _record(_harness(monkeypatch, db).service, current_page=50)
+    insert = next(sql for sql, _params in db.statements if _INSERT_UPDATE in sql)
+    assert "clock_timestamp()" in insert
+
+
 def test_a_supplied_total_is_saved_and_used_for_validation(monkeypatch):
     db = _db(book=_book(total_pages=None))
     _record(_harness(monkeypatch, db).service, current_page=50, total_pages=120)
     assert _saved(db)["total_pages"] == 120
 
 
-def test_a_catalog_total_is_copied_to_an_empty_library_total(monkeypatch):
+def test_a_catalog_total_is_not_saved_as_the_readers_own(monkeypatch):
     db = _db(book=_book(total_pages=None, page_count=250))
     _record(_harness(monkeypatch, db).service, current_page=50)
-    assert _saved(db)["total_pages"] == 250
+    assert _saved(db)["total_pages"] is None
+
+
+def test_an_existing_library_total_is_kept(monkeypatch):
+    db = _db(book=_book(total_pages=300, page_count=250))
+    _record(_harness(monkeypatch, db).service, current_page=50)
+    assert _saved(db)["total_pages"] == 300
 
 
 # --- Status and finishing -------------------------------------------------------------
@@ -568,6 +581,17 @@ def test_deleting_the_latest_reverses_the_daily_row_and_restores_the_book(monkey
     assert harness.invalidated[0][1] is True
 
 
+def test_undo_locks_the_daily_row_before_changing_the_update(monkeypatch):
+    db = _delete_db(daily=(50, 20, None))
+
+    _harness(monkeypatch, db).service.delete_progress_update_sync("u1", "alice")
+
+    statements = [sql for sql, _params in db.statements]
+    daily_lock = next(index for index, sql in enumerate(statements) if _READ_DAILY in sql)
+    delete_update = next(index for index, sql in enumerate(statements) if "DELETE FROM progress_updates" in sql)
+    assert daily_lock < delete_update
+
+
 def test_deleting_restores_an_empty_library_total(monkeypatch):
     extra = {"log_date": "2026-01-15", "previous_page": 10, "previous_status": "reading", "previous_finish_date": None, "previous_total_pages": None}
     db = _delete_db(extra=extra)
@@ -604,8 +628,8 @@ def test_deleting_an_update_with_no_daily_row_touches_no_log(monkeypatch):
 
 # --- Edit -----------------------------------------------------------------------------
 
-def _edit_db(log_id="log-1", minutes=15, more=(), pages=40):
-    extra = {"log_date": "2026-01-14"}
+def _edit_db(log_id="log-1", minutes=15, more=(), pages=40, extra=None):
+    extra = {"log_date": "2026-01-14", **(extra or {})}
     return _Db([
         (_FIND_UPDATE, ("b1",)),
         (_READ_UPDATE, ("b1", pages, minutes, log_id, WHEN, extra)),
@@ -663,7 +687,18 @@ def test_adding_minutes_does_not_bring_back_a_daily_log_the_user_deleted(monkeyp
     harness.service.update_progress_update_sync("u1", "alice", minutes_read=25)
 
     assert harness.merged == []
-    assert db.params("UPDATE progress_updates") == (25, "u1", "alice")
+    minutes, extra, *_ids = db.params("UPDATE progress_updates")
+    assert minutes == 25 and '"daily_log_deleted": true' in extra
+
+
+def test_a_daily_log_known_to_be_deleted_stays_deleted_once_minutes_reach_zero(monkeypatch):
+    db = _edit_db(log_id=None, minutes=0, pages=0, extra={"daily_log_deleted": True})
+    harness = _harness(monkeypatch, db)
+
+    harness.service.update_progress_update_sync("u1", "alice", minutes_read=15)
+
+    assert harness.merged == []
+    assert db.params("UPDATE progress_updates") == (15, "u1", "alice")
 
 
 def test_clearing_minutes_subtracts_them(monkeypatch):

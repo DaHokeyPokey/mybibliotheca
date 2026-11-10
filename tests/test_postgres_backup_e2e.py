@@ -13,10 +13,22 @@ import zipfile
 from datetime import datetime, timezone
 
 import pytest
+from psycopg.conninfo import make_conninfo
 
 from app.infrastructure.postgres_store import PostgresStore
 from app.services import postgres_backup_service
 from app.services.postgres_backup_service import PostgresBackupService, PostgresBackupError
+
+_FIXTURE_TABLES = ("users", "books", "user_books", "reading_logs", "book_contributors",
+                   "book_relationship_edges", "custom_fields", "journal_entries", "progress_updates")
+
+
+def _require_fresh(store):
+    """Stop before a test rewrites a database that holds anything."""
+    with store.connection() as connection, connection.cursor() as cursor:
+        for table in _FIXTURE_TABLES:
+            cursor.execute(f"SELECT count(*) FROM {table}")
+            assert cursor.fetchone()[0] == 0, f"POSTGRES_TEST_DSN must be fresh; {table} is not empty"
 
 
 def test_postgres_backup_restore_round_trip_and_rejects_corrupt_archive(monkeypatch, tmp_path):
@@ -38,11 +50,8 @@ def test_postgres_backup_restore_round_trip_and_rejects_corrupt_archive(monkeypa
 
     try:
         store.initialize_schema()
+        _require_fresh(store)
         with store.connection() as connection, connection.cursor() as cursor:
-            for table in ("users", "books", "user_books", "reading_logs", "book_contributors",
-                          "book_relationship_edges", "custom_fields"):
-                cursor.execute(f"SELECT count(*) FROM {table}")
-                assert cursor.fetchone()[0] == 0, f"POSTGRES_TEST_DSN must be fresh; {table} is not empty"
             cursor.execute("CREATE TABLE backup_restore_probe (value text NOT NULL)")
             cursor.execute("INSERT INTO backup_restore_probe VALUES ('before')")
         backup_path, manifest = service.create_backup(
@@ -81,11 +90,18 @@ def test_postgres_backup_restore_round_trip_and_rejects_corrupt_archive(monkeypa
         store.close()
 
 
-def test_a_backup_from_before_migration_7_restores_on_the_upgraded_schema(monkeypatch, tmp_path):
+@pytest.mark.parametrize("schema", [None, "library"], ids=["default-schema", "schema-from-the-dsn"])
+def test_a_backup_from_before_migration_7_restores_on_the_upgraded_schema(monkeypatch, tmp_path, schema):
     configured_dsn = os.getenv("POSTGRES_TEST_DSN")
     if not configured_dsn:
-        pytest.skip("Set POSTGRES_TEST_DSN to a disposable PostgreSQL database")
+        pytest.skip("Set POSTGRES_TEST_DSN to a fresh disposable PostgreSQL database")
     store = PostgresStore() if configured_dsn == "compose" else PostgresStore(configured_dsn)
+    if schema:
+        with store.transaction() as connection, connection.cursor() as cursor:
+            cursor.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+        base_dsn = store.dsn
+        store.close()
+        store = PostgresStore(make_conninfo(base_dsn, options=f"-c search_path={schema},public"))
     covers_dir = tmp_path / "covers"
     uploads_dir = tmp_path / "uploads"
     covers_dir.mkdir()
@@ -105,6 +121,7 @@ def test_a_backup_from_before_migration_7_restores_on_the_upgraded_schema(monkey
 
     try:
         store.initialize_schema()
+        _require_fresh(store)
         run(
             "DROP TABLE progress_updates, journal_entries",
             "DELETE FROM app_schema_migrations WHERE version >= 7",
@@ -135,7 +152,7 @@ def test_a_backup_from_before_migration_7_restores_on_the_upgraded_schema(monkey
 
         assert value("SELECT count(*) FROM books WHERE id='v6-book'") == 1
         assert value("SELECT count(*) FROM books WHERE id='later-book'") == 0
-        assert value("SELECT to_regclass('progress_updates')") is None
+        assert value(f"SELECT to_regclass('{schema or 'public'}.progress_updates')") is None
         assert value("SELECT max(version) FROM app_schema_migrations") == 6
 
         store.initialize_schema()  # what the restart after a restore does

@@ -47,6 +47,7 @@ _PG_ENV_KEYS = {
     "sslkey": "PGSSLKEY",
     "connect_timeout": "PGCONNECT_TIMEOUT",
     "gssencmode": "PGGSSENCMODE",
+    "options": "PGOPTIONS",  # a search_path set here decides which tables the restore cleanup finds
 }
 
 

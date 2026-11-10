@@ -546,6 +546,55 @@ def test_changing_the_backup_index_waits_for_the_other_worker(monkeypatch, tmp_p
             changing.result(timeout=10)
 
 
+def test_a_reader_cannot_replace_an_index_being_written(monkeypatch, tmp_path):
+    service = _backup_service(monkeypatch, tmp_path)
+    real_save = service._save_backup_index
+
+    def read_just_before_saving():
+        service.list_backups()
+        service.get_backup("b1")
+        real_save()
+
+    monkeypatch.setattr(service, "_save_backup_index", read_just_before_saving)
+    service._record_backup(_backup_info(tmp_path, "b1"))
+
+    assert [backup.id for backup in service.list_backups()] == ["b1"]
+
+
+def _damaged_index(tmp_path, service):
+    good = json.dumps({"b1": _backup_info(tmp_path, "b1").to_dict()})
+    service.backup_index_file.write_text(good + "trailing garbage")
+    return good + "trailing garbage"
+
+
+def test_readers_recover_a_damaged_index_without_rewriting_it(monkeypatch, tmp_path):
+    service = _backup_service(monkeypatch, tmp_path)
+    damaged = _damaged_index(tmp_path, service)
+
+    assert [backup.id for backup in service.list_backups()] == ["b1"]
+
+    assert service.backup_index_file.read_text() == damaged
+
+
+def test_readers_leave_an_unreadable_index_in_place(monkeypatch, tmp_path):
+    service = _backup_service(monkeypatch, tmp_path)
+    service.backup_index_file.write_text("not json at all")
+
+    assert service.list_backups() == []
+
+    assert service.backup_index_file.read_text() == "not json at all"
+    assert not service.backup_index_file.with_suffix(".json.corrupted").exists()
+
+
+def test_a_writer_repairs_a_damaged_index_under_the_lock(monkeypatch, tmp_path):
+    service = _backup_service(monkeypatch, tmp_path)
+    _damaged_index(tmp_path, service)
+
+    service._record_backup(_backup_info(tmp_path, "b2"))
+
+    assert sorted(json.loads(service.backup_index_file.read_text())) == ["b1", "b2"]
+
+
 def _opds_due(monkeypatch, *, holds_lock):
     import app.services.opds_sync_runner as opds
 

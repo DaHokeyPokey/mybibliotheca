@@ -269,6 +269,19 @@ def _pause_after(monkeypatch, owner, name):
     return reached, resume
 
 
+def _pause_before(monkeypatch, owner, name):
+    """Hold the first call to owner.name just before it runs, until the test lets it go."""
+    reached, resume, real = threading.Event(), threading.Event(), getattr(owner, name)
+
+    def paused(*args):
+        reached.set()
+        assert resume.wait(20)
+        return real(*args)
+
+    monkeypatch.setattr(owner, name, paused)
+    return reached, resume
+
+
 def _remove_during_save(world, reached, resume, **save):
     """Run a removal against a paused save. Returns whether the removal had to wait for it."""
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -386,6 +399,78 @@ def test_a_journal_entry_that_waits_for_a_removal_finds_the_book_gone(world):
             creating.result(timeout=30)
 
     assert _rows(world.store, "SELECT count(*) FROM journal_entries WHERE user_id=%s", (world.user,)) == [(0,)]
+
+
+def test_a_deleted_daily_log_stays_deleted_through_repeated_minute_edits(world):
+    update = world.record(position_percent=10, minutes_read=10)
+    assert world.service.reading_logs.delete_reading_log_sync(update["reading_log"]["id"], world.user)
+
+    world.service.update_progress_update_sync(update["update"]["id"], world.user, minutes_read=0)
+    edited = world.service.update_progress_update_sync(update["update"]["id"], world.user, minutes_read=15)
+
+    assert _daily(world) == []
+    assert edited["minutes_read"] == 15
+
+
+def test_minutes_come_back_after_the_service_removed_an_empty_daily_row(world):
+    update = world.record(position_percent=10, minutes_read=10)
+
+    world.service.update_progress_update_sync(update["update"]["id"], world.user, minutes_read=0)
+    assert _daily(world) == []
+    world.service.update_progress_update_sync(update["update"]["id"], world.user, minutes_read=15)
+
+    assert _daily(world) == [(date(2026, 1, 15), 0, 15, None)]
+
+
+def test_undo_follows_the_order_updates_moved_the_book_when_times_tie(world, monkeypatch):
+    first_to_start = progress.PostgresProgressService(world.store)
+    began, second_finished, real_lock = threading.Event(), threading.Event(), first_to_start._lock
+
+    def begin_then_wait_for_the_other_save(cursor, user_id, book_id):
+        cursor.execute("SELECT 1")  # opens the transaction, which fixes its now()
+        began.set()
+        assert second_finished.wait(20)
+        real_lock(cursor, user_id, book_id)
+
+    monkeypatch.setattr(first_to_start, "_lock", begin_then_wait_for_the_other_save)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        saving = pool.submit(first_to_start.log_progress_sync, user_id=world.user, book_id=world.book, current_page=70, occurred_at=WHEN)
+        assert began.wait(20)
+        earlier = world.record(current_page=50)
+        second_finished.set()
+        latest = saving.result(timeout=30)
+
+    assert world.service.get_book_progress_sync(world.user, world.book)["last_update"]["id"] == latest["update"]["id"]
+    with pytest.raises(progress.ProgressConflictError):
+        world.service.delete_progress_update_sync(earlier["update"]["id"], world.user)
+
+
+def test_undo_does_not_deadlock_with_deleting_the_daily_log(world, monkeypatch):
+    update = world.record(current_page=15, minutes_read=10)
+    reached, resume = _pause_before(monkeypatch, world.service, "_adjust_daily_log")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        undoing = pool.submit(world.service.delete_progress_update_sync, update["update"]["id"], world.user)
+        assert reached.wait(20)
+        removing = pool.submit(world.service.reading_logs.delete_reading_log_sync, update["reading_log"]["id"], world.user)
+        time.sleep(1)  # time for the removal to reach its row locks
+        resume.set()
+        undoing.result(timeout=30)
+        removing.result(timeout=30)
+
+    assert _daily(world) == []
+    assert _update_count(world) == 0
+
+
+def test_a_corrected_catalog_page_count_applies_to_later_updates(world):
+    _run(world.store, "UPDATE user_books SET total_pages=NULL WHERE user_id=%s AND book_id=%s", (world.user, world.book))
+    _run(world.store, "UPDATE books SET page_count=300 WHERE id=%s", (world.book,))
+    world.record(current_page=50)
+
+    _run(world.store, "UPDATE books SET page_count=450 WHERE id=%s", (world.book,))
+    result = world.record(current_page=350, occurred_at=WHEN + timedelta(hours=1))
+
+    assert result["progress"]["total_pages"] == 450
 
 
 def test_a_new_journal_entry_is_linked_and_sanitized(world):

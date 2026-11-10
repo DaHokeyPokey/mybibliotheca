@@ -224,10 +224,11 @@ class PostgresProgressService:
                 extra.update(previous_page=book["current_page"], previous_status=book["reading_status"],
                              previous_finish_date=finish_before.isoformat() if finish_before else None,
                              previous_total_pages=book["total_pages"])
+            # clock_timestamp, not the column default: now() is when this transaction began, before it waited for the lock.
             cursor.execute(
                 "INSERT INTO progress_updates (id, user_id, book_id, occurred_at, current_page, position_percent, pages_delta, "
-                "minutes_read, comment, journal_entry_id, reading_log_id, source, finished, extra) "
-                f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb) RETURNING {_UPDATE_SELECT}",
+                "minutes_read, comment, journal_entry_id, reading_log_id, source, finished, extra, created_at) "
+                f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, clock_timestamp()) RETURNING {_UPDATE_SELECT}",
                 (str(uuid.uuid4()), user_id, book_id, moment, page, percent, pages_delta, minutes, note,
                  journal["id"] if journal else None, daily["id"] if daily else None, source, finished, json.dumps(extra)),
             )
@@ -242,10 +243,11 @@ class PostgresProgressService:
                     status = ReadingStatus.READ.value
                 elif status in _NOT_STARTED:
                     status = ReadingStatus.READING.value
+                # Only a total the reader gave is stored: the catalog's count can still be corrected later (D-022).
                 cursor.execute(
                     "UPDATE user_books SET current_page=%s, total_pages=%s, reading_status=%s, start_date=COALESCE(start_date, %s), "
                     "finish_date=%s, updated_at=now() WHERE user_id=%s AND book_id=%s",
-                    (book["current_page"] if page is None else page, total, status, moment, finish_value, user_id, book_id),
+                    (book["current_page"] if page is None else page, new_total or book["total_pages"], status, moment, finish_value, user_id, book_id),
                 )
             state = self._book_progress(cursor, user_id, book_id)
 
@@ -307,14 +309,17 @@ class PostgresProgressService:
             if "minutes_read" in changes:
                 old_minutes = current["minutes_read"] or 0
                 added = (changes["minutes_read"] or 0) - old_minutes
-                if current["reading_log_id"] and added:
-                    self._adjust_daily_log(cursor, current["reading_log_id"], user_id, 0, added)
-                elif added > 0 and not old_minutes and not current["pages_delta"]:
-                    # This update never fed a daily row. One that did and has none left had it deleted by the user.
-                    extra = current["extra"]
+                extra = current["extra"]
+                if current["reading_log_id"]:
+                    if added:
+                        self._adjust_daily_log(cursor, current["reading_log_id"], user_id, 0, added)
+                elif old_minutes or current["pages_delta"]:
+                    # It fed a daily row that is gone, so the user deleted it. Noted now because these counts may reach zero.
+                    changes["extra"] = json.dumps({**extra, "daily_log_deleted": True})
+                elif added > 0 and not extra.get("daily_log_deleted"):
                     day = date.fromisoformat(extra["log_date"]) if "log_date" in extra else current["occurred_at"].date()
                     changes["reading_log_id"] = self._merge_day(cursor, user_id, current["book_id"], day, 0, added)["id"]
-            # Column names come from _EDITABLE_FIELDS and the line above, never from the caller.
+            # Column names come from _EDITABLE_FIELDS and the lines above, never from the caller.
             assignments = ", ".join(f"{name}=%s" for name in changes)
             cursor.execute(
                 f"UPDATE progress_updates SET {assignments}, updated_at=now() WHERE id=%s AND user_id=%s RETURNING {_UPDATE_SELECT}",
@@ -334,9 +339,10 @@ class PostgresProgressService:
             cursor.execute(f"SELECT id FROM progress_updates WHERE user_id=%s AND book_id=%s {_NEWEST_FIRST} LIMIT 1", (user_id, book_id))
             if cursor.fetchone()[0] != update_id:
                 raise ProgressConflictError("Only the latest update can be deleted")
-            cursor.execute("DELETE FROM progress_updates WHERE id=%s AND user_id=%s", (update_id, user_id))
+            # Daily row first, the order deleting a reading log takes them: that locks its row, then its foreign key updates this one.
             if current["reading_log_id"]:
                 self._adjust_daily_log(cursor, current["reading_log_id"], user_id, -current["pages_delta"], -(current["minutes_read"] or 0))
+            cursor.execute("DELETE FROM progress_updates WHERE id=%s AND user_id=%s", (update_id, user_id))
             extra = current["extra"]
             if "previous_page" in extra:
                 cursor.execute(
